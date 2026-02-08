@@ -2,7 +2,7 @@ import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
 
 export default async function handler(req, res) {
-  // 🆔 إعداد لوجات التتبع (Logs)
+  // 🆔 إعداد لوجات التتبع (Logs) لمراقبة الطلبات
   const reqId = Math.random().toString(36).substring(7).toUpperCase();
   const logPrefix = `[FinanceAPI - ${reqId}]`;
 
@@ -29,7 +29,7 @@ export default async function handler(req, res) {
 
   const { startDate, endDate } = req.query;
 
-  // تجهيز التواريخ بتنسيق مناسب للدالة
+  // تجهيز التواريخ بتنسيق مناسب للدالة (ISO String)
   const formattedStartDate = startDate ? `${startDate}T00:00:00` : null;
   const formattedEndDate = endDate ? `${endDate}T23:59:59` : null;
 
@@ -48,6 +48,7 @@ export default async function handler(req, res) {
     if (settingsData) {
       const val = parseFloat(settingsData.value);
       if (!isNaN(val)) {
+        // تحويل الرقم: إذا كان > 1 (مثل 15) نقسمه على 100، وإلا نستخدمه كما هو
         PLATFORM_PERCENTAGE = val > 1 ? val / 100 : val;
       }
     }
@@ -71,7 +72,7 @@ export default async function handler(req, res) {
     // ============================================================
     // 3. جلب قائمة المدرسين وحساب أرباح كل مدرس
     // ============================================================
-    // ⚠️ هام: نجلب teacher_profile_id لأن الأموال مربوطة به وليس بـ id المستخدم
+    // ⚠️ هام: نجلب teacher_profile_id لأن الأموال مربوطة به في جدول العمليات
     const { data: teachersList, error: teacherError } = await supabase
       .from('users')
       .select('id, first_name, admin_username, teacher_profile_id')
@@ -82,7 +83,7 @@ export default async function handler(req, res) {
     // استخدام Promise.all لتنفيذ الحسابات بشكل متوازي
     const teachersDataPromises = teachersList.map(async (teacher) => {
       
-      // إذا لم يكن للمستخدم بروفايل مدرس، لا يمكننا حساب أرباحه
+      // إذا لم يكن للمستخدم بروفايل مدرس، لا يمكننا حساب أرباحه (تخطي)
       if (!teacher.teacher_profile_id) {
          return {
             id: teacher.id,
@@ -94,10 +95,10 @@ export default async function handler(req, res) {
          };
       }
 
-      // استدعاء دالة RPC لحساب أرباح المدرس باستخدام teacher_profile_id (BigInt)
+      // استدعاء دالة RPC لحساب أرباح المدرس باستخدام teacher_profile_id (وليس id المستخدم)
       const { data: teacherSales, error: rpcTeacherError } = await supabase
         .rpc('get_teacher_revenue', { 
-            teacher_id_arg: teacher.teacher_profile_id, // ✅ التعديل الجوهري
+            teacher_id_arg: teacher.teacher_profile_id, // ✅ التصحيح الأساسي هنا
             start_date: formattedStartDate, 
             end_date: formattedEndDate
         });
@@ -112,7 +113,7 @@ export default async function handler(req, res) {
       const platformFee = sales * PLATFORM_PERCENTAGE;
       const netProfit = sales - platformFee;
 
-      // حساب عدد العمليات
+      // حساب عدد العمليات (فقط إذا كان هناك مبيعات لتوفير الموارد)
       let transactionCount = 0;
       if (sales > 0) {
          const { count } = await supabase
@@ -128,7 +129,7 @@ export default async function handler(req, res) {
       }
 
       return {
-        id: teacher.id, // ID المستخدم (للربط بالفرونت إند)
+        id: teacher.id, // نُعيد ID المستخدم للفرونت إند لغرض العرض والروابط
         name: teacher.first_name || teacher.admin_username || 'مدرس غير معروف',
         sales: sales,
         transaction_count: transactionCount,
