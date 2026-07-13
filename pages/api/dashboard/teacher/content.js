@@ -45,6 +45,39 @@ async function deleteVideoFromBunny(bunnyVideoId) {
 }
 
 // ============================================================
+// 🎥 دالة مساعدة: جمع كل معرفات فيديوهات Bunny المرتبطة بفصل/مادة/كورس
+// قبل حذفه نهائياً — لتجنب بقاء فيديوهات يتيمة على Bunny عند حذف
+// عنصر أعلى في التسلسل الهرمي (وليس فقط عند حذف الفيديو مباشرة)
+// ============================================================
+async function getBunnyVideoIdsUnder(type, id) {
+  try {
+    let chapterIds = [];
+
+    if (type === 'chapters') {
+      chapterIds = [id];
+    } else if (type === 'subjects') {
+      const { data: chapters } = await supabase.from('chapters').select('id').eq('subject_id', id);
+      chapterIds = (chapters || []).map(c => c.id);
+    } else if (type === 'courses') {
+      const { data: subjects } = await supabase.from('subjects').select('id').eq('course_id', id);
+      const subjectIds = (subjects || []).map(s => s.id);
+      if (subjectIds.length) {
+        const { data: chapters } = await supabase.from('chapters').select('id').in('subject_id', subjectIds);
+        chapterIds = (chapters || []).map(c => c.id);
+      }
+    }
+
+    if (!chapterIds.length) return [];
+
+    const { data: videos } = await supabase.from('videos').select('bunny_video_id').in('chapter_id', chapterIds);
+    return (videos || []).map(v => v.bunny_video_id).filter(Boolean);
+  } catch (e) {
+    console.error('⚠️ [Bunny] فشل تجميع معرفات الفيديوهات الفرعية للتنظيف:', e.message);
+    return [];
+  }
+}
+
+// ============================================================
 // 🔢 دالة مساعدة: جلب قيمة sort_order التالية لعنصر جديد
 // بدلاً من 999 الثابتة، نحسب: MAX(sort_order) + 1 داخل نفس الحاوية
 // ============================================================
@@ -409,11 +442,13 @@ export default async (req, res) => {
       if (action === 'delete') {
          const { id } = data;
          let isAuthorized = false;
-         let bunnyVideoIdToDelete = null; // 👈 متغير لتخزين معرف باني ستريم
+         let bunnyVideoIdsToDelete = []; // 👈 كل معرفات Bunny التي يجب حذفها بعد نجاح حذف قاعدة البيانات
 
          if (type === 'courses') {
             const { data: course } = await supabase.from('courses').select('teacher_id').eq('id', id).single();
             if (course && String(course.teacher_id) === String(auth.teacherId)) isAuthorized = true;
+            // 👈 حذف كورس بالكامل يحذف عبره كل المواد/الفصول/الفيديوهات (Cascade) — نجمع فيديوهاتها أولاً
+            if (isAuthorized) bunnyVideoIdsToDelete = await getBunnyVideoIdsUnder('courses', id);
          } else if (type === 'exams') {
              const { data: exam } = await supabase.from('exams').select('subjects(courses(teacher_id))').eq('id', id).single();
              const teacherId = exam?.subjects?.courses?.teacher_id;
@@ -422,9 +457,12 @@ export default async (req, res) => {
             // 👈 إذا كان العنصر المحذوف فيديو، نقوم بجلب معرفه على Bunny قبل الحذف
             if (type === 'videos') {
                 const { data: videoRecord } = await supabase.from('videos').select('bunny_video_id').eq('id', id).single();
-                if (videoRecord) {
-                    bunnyVideoIdToDelete = videoRecord.bunny_video_id;
+                if (videoRecord?.bunny_video_id) {
+                    bunnyVideoIdsToDelete = [videoRecord.bunny_video_id];
                 }
+            } else if (type === 'subjects' || type === 'chapters') {
+                // 👈 حذف مادة أو فصل يحذف عبره فيديوهاته (Cascade) — نجمعها أولاً لتنظيف Bunny لاحقاً
+                bunnyVideoIdsToDelete = await getBunnyVideoIdsUnder(type, id);
             }
 
             const targetCourseId = await getParentCourseId(type, { id }, true);
@@ -437,10 +475,10 @@ export default async (req, res) => {
          const { error } = await supabase.from(type).delete().eq('id', id);
          if (error) throw error;
 
-         // 👈 إذا تم الحذف من قاعدة البيانات بنجاح وكان هناك فيديو مرتبط، نحذفه من Bunny
-         if (type === 'videos' && bunnyVideoIdToDelete) {
-             // نرسل أمر الحذف في الخلفية ولا ننتظر النتيجة (لكي لا نعطل الاستجابة للعميل)
-             deleteVideoFromBunny(bunnyVideoIdToDelete);
+         // 👈 إذا تم الحذف من قاعدة البيانات بنجاح وكان هناك فيديوهات مرتبطة، نحذفها من Bunny
+         if (bunnyVideoIdsToDelete.length > 0) {
+             // نرسل أوامر الحذف في الخلفية ولا ننتظر النتيجة (لكي لا نعطل الاستجابة للعميل)
+             bunnyVideoIdsToDelete.forEach(vid => deleteVideoFromBunny(vid));
          }
 
          return res.status(200).json({ success: true });

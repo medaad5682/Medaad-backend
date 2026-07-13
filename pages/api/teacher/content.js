@@ -49,6 +49,39 @@ async function deleteVideoFromBunny(bunnyVideoId) {
 }
 
 // ============================================================
+// 🎥 دالة مساعدة: جمع كل معرفات فيديوهات Bunny المرتبطة بفصل/مادة/كورس
+// قبل حذفه نهائياً — لتجنب بقاء فيديوهات يتيمة على Bunny عند حذف
+// عنصر أعلى في التسلسل الهرمي (وليس فقط عند حذف الفيديو مباشرة)
+// ============================================================
+async function getBunnyVideoIdsUnder(type, id) {
+  try {
+    let chapterIds = [];
+
+    if (type === 'chapters') {
+      chapterIds = [id];
+    } else if (type === 'subjects') {
+      const { data: chapters } = await supabase.from('chapters').select('id').eq('subject_id', id);
+      chapterIds = (chapters || []).map(c => c.id);
+    } else if (type === 'courses') {
+      const { data: subjects } = await supabase.from('subjects').select('id').eq('course_id', id);
+      const subjectIds = (subjects || []).map(s => s.id);
+      if (subjectIds.length) {
+        const { data: chapters } = await supabase.from('chapters').select('id').in('subject_id', subjectIds);
+        chapterIds = (chapters || []).map(c => c.id);
+      }
+    }
+
+    if (!chapterIds.length) return [];
+
+    const { data: videos } = await supabase.from('videos').select('bunny_video_id').in('chapter_id', chapterIds);
+    return (videos || []).map(v => v.bunny_video_id).filter(Boolean);
+  } catch (e) {
+    console.error('⚠️ [Bunny] فشل تجميع معرفات الفيديوهات الفرعية للتنظيف:', e.message);
+    return [];
+  }
+}
+
+// ============================================================
 // 🔢 دالة مساعدة: جلب قيمة sort_order التالية لعنصر جديد
 // بدلاً من 999 الثابتة، نحسب: MAX(sort_order) + 1 داخل نفس الحاوية
 // ============================================================
@@ -347,22 +380,25 @@ export default async (req, res) => {
            return res.status(403).json({ error: 'لا تملك صلاحية حذف هذا المحتوى.' });
        }
 
-       // ✅ تنظيف Bunny Stream إذا كان الفيديو مرفوعاً كملف (وليس رابط يوتيوب)
-       let bunnyVideoIdToDelete = null;
+       // ✅ تنظيف Bunny Stream: نجمع كل معرفات الفيديوهات المرتبطة بالعنصر المحذوف
+       // (فيديو مباشرة، أو كل فيديوهات فصل/مادة/كورس سيُحذف عبر Cascade)
+       let bunnyVideoIdsToDelete = [];
        if (type === 'videos') {
            const { data: videoRecord } = await supabase.from('videos').select('bunny_video_id').eq('id', id).single();
            if (videoRecord?.bunny_video_id) {
-               bunnyVideoIdToDelete = videoRecord.bunny_video_id;
+               bunnyVideoIdsToDelete = [videoRecord.bunny_video_id];
            }
+       } else if (type === 'chapters' || type === 'subjects' || type === 'courses') {
+           bunnyVideoIdsToDelete = await getBunnyVideoIdsUnder(type, id);
        }
 
        const { error } = await supabase.from(type).delete().eq('id', id);
 
        if (error) throw error;
 
-       if (type === 'videos' && bunnyVideoIdToDelete) {
+       if (bunnyVideoIdsToDelete.length > 0) {
            // لا ننتظر النتيجة حتى لا نؤخر الرد على التطبيق
-           deleteVideoFromBunny(bunnyVideoIdToDelete);
+           bunnyVideoIdsToDelete.forEach(vid => deleteVideoFromBunny(vid));
        }
 
        return res.status(200).json({ success: true });

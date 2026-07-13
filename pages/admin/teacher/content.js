@@ -1,7 +1,8 @@
 import TeacherLayout from '../../../components/TeacherLayout';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
-import { useBunnyDirectUpload } from '../../../hooks/useBunnyDirectUpload';
+import { useBunnyUploadQueue } from '../../../hooks/useBunnyUploadQueue';
+import UploadQueueWidget from '../../../components/UploadQueueWidget';
 
 // --- أيقونات SVG (محدثة لتتوافق مع الألوان الديناميكية) ---
 const Icons = {
@@ -76,18 +77,18 @@ export default function ContentManager() {
   const [viewsPage, setViewsPage] = useState(1); 
   const [totalViewsCount, setTotalViewsCount] = useState(0);
 
-  // ✅ حالات رفع الفيديو إلى Bunny Stream (TUS Direct Upload)
+  // ✅ حالات رفع الفيديو إلى Bunny Stream — قائمة انتظار تدعم عدة رفعات متزامنة
+  // يستطيع المعلم إغلاق نافذة "إضافة فيديو" أثناء الرفع وفتح نافذة أخرى
+  // لفصل/مادة/كورس مختلف والرفع يستمر في الخلفية عبر الودجت العائم أسفل الشاشة.
   const [videoFile, setVideoFile] = useState(null);
   const {
+    uploads: bunnyUploads,
+    activeCount: activeUploadsCount,
     startUpload: startBunnyUpload,
-    cancel: cancelBunnyUpload,
-    reset: resetBunnyUpload,
-    resume: resumeBunnyUpload,
-    progress: videoUploadProgress,
-    status: bunnyUploadStatus,
-    error: bunnyUploadError,
-  } = useBunnyDirectUpload();
-  const isUploadingVideo = ['requesting', 'uploading', 'confirming'].includes(bunnyUploadStatus);
+    cancelUpload: cancelBunnyUpload,
+    resumeUpload: resumeBunnyUpload,
+    dismissUpload: dismissBunnyUpload,
+  } = useBunnyUploadQueue();
 
   // حالة المعالجة لكل فيديو — تُملأ تلقائياً من Bunny عند تحميل الصفحة
   // الشكل: { [videoId]: { loading: bool, status: 'waiting'|'processing'|'ready'|'failed', label: string } }
@@ -263,38 +264,38 @@ export default function ContentManager() {
   };
 
   // ✅ حفظ/استكمال فيديو جديد عبر TUS Direct Upload إلى Bunny Stream
-  // ─ إذا اختار المعلم ملفاً: يُرفع مباشرةً من المتصفح إلى Bunny عبر TUS
-  //   ثم يُحفظ السجل تلقائياً في confirm-upload بدون المرور بالسيرفر.
+  // ─ إذا اختار المعلم ملفاً: يُضاف الرفع إلى قائمة الانتظار في الخلفية،
+  //   وتُغلق النافذة فوراً حتى يستطيع المعلم فتح نافذة أخرى لفصل/مادة/كورس
+  //   مختلف وبدء رفع جديد بينما الرفع الأول ما زال جارياً.
   // ─ إذا أدخل رابط يوتيوب فقط: يُرسل إلى content API مع مدة مطلوبة.
   const handleSaveVideo = async () => {
       if (!videoFile && !formData.url) {
           return showAlert('error', '⚠️ يجب رفع ملف فيديو أو إدخال رابط يوتيوب على الأقل.');
       }
 
-      // ── مسار Bunny TUS: رفع مباشر ──────────────────────────────────
+      // ── مسار Bunny TUS: رفع مباشر في الخلفية عبر قائمة الانتظار ─────
       if (videoFile) {
-          // ✅ FIX: إذا كانت هناك جلسة خطأ نشطة، نستأنف مباشرةً بدلاً من بدء من الصفر
-          if (bunnyUploadStatus === 'error') {
-              resumeBunnyUpload();
-              return;
-          }
-          await startBunnyUpload({
+          startBunnyUpload({
               file: videoFile,
               chapterId: selectedChapter.id,
+              chapterTitle: selectedChapter.title,
+              subjectTitle: selectedSubject?.title,
+              courseTitle: selectedCourse?.title,
               title: formData.title || videoFile.name,
               notifyStudents: formData.notifyStudents,
-              onComplete: async (confirmData) => {
+              onComplete: async () => {
                   showAlert('success', '✅ تم رفع الفيديو بنجاح وسيكون متاحاً بعد اكتمال المعالجة.');
-                  setModalType(null);
-                  resetBunnyUpload(videoFile); // ✅ تمرير الملف لحذف الجلسة المحفوظة
-                  setVideoFile(null);
                   await refreshView();
               },
               onError: (err) => {
-                  showAlert('error', err.message || 'فشل رفع الفيديو إلى السيرفر');
+                  // الخطأ يُعرض داخل الودجت العائم نفسه، والمعلم يمكنه الضغط على "استكمال"
               },
           });
-          return; // confirm-upload يتولى الحفظ في DB
+          // إغلاق النافذة فوراً — الرفع يستمر في الخلفية ويظهر في الودجت العائم
+          setModalType(null);
+          setVideoFile(null);
+          showAlert('success', '📤 بدأ رفع الفيديو في الخلفية، يمكنك إضافة فيديو آخر الآن.');
+          return;
       }
 
       // ── مسار يوتيوب: رابط فقط بدون ملف ────────────────────────────
@@ -374,7 +375,8 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
 });
       setNotifyPdf(false);
       setVideoFile(null);
-      resetBunnyUpload(); // ✅ يُعيد تعيين الـ UI فقط — لا يحذف الجلسة المحفوظة (تُحذف عند الإلغاء أو الاكتمال)
+      // ملاحظة: لا حاجة لإعادة تعيين أي حالة رفع هنا — كل عملية رفع في قائمة
+      // الانتظار (useBunnyUploadQueue) مستقلة تماماً ولا تتأثر بفتح/إغلاق النافذة.
       
       if (['edit_course', 'edit_subject', 'edit_chapter'].includes(type)) {
           setFormData({ 
@@ -780,7 +782,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
 
       {/* --- Unified Modal System --- */}
       {['add_course', 'edit_course', 'add_subject', 'edit_subject', 'add_chapter', 'edit_chapter', 'add_video'].includes(modalType) && (
-          <Modal title={getModalTitle()} onClose={() => setModalType(null)} closeOnOverlayClick={modalType !== 'add_video'}>
+          <Modal title={getModalTitle()} onClose={() => setModalType(null)} closeOnOverlayClick={true}>
               <div className="form-group">
                   <label>العنوان</label>
                   <input 
@@ -827,42 +829,22 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                         className="input file" 
                         type="file" 
                         accept="video/*" 
-                        disabled={isUploadingVideo}
                         onChange={e => setVideoFile(e.target.files[0] || null)} 
                       />
                       <small style={{color: 'var(--text-muted)', display: 'block', marginTop: '6px'}}>
                           يمكنك رفع ملف فيديو، أو إدخال رابط يوتيوب أدناه، أو كليهما معاً.
+                          سيبدأ الرفع في الخلفية فور الحفظ، ويمكنك فتح فيديو آخر مباشرة.
                       </small>
                   </div>
                   <div className="form-group">
                       <label>رابط يوتيوب (اختياري)</label>
-                      <input className="input" value={formData.url} onChange={e=>setFormData({...formData, url: e.target.value})} placeholder="https://... (اختياري)" dir="ltr" disabled={isUploadingVideo} />
+                      <input className="input" value={formData.url} onChange={e=>setFormData({...formData, url: e.target.value})} placeholder="https://... (اختياري)" dir="ltr" />
                   </div>
-                  {/* ── حالة رفع TUS المباشر ── */}
-                  {isUploadingVideo && (
-                      <div className="form-group" style={{marginTop: '10px'}}>
-                          <div className="upload-progress-track">
-                              <div className="upload-progress-fill" style={{width: `${videoUploadProgress}%`}}></div>
-                          </div>
-                          <small style={{color: 'var(--gold)', display: 'block', marginTop: '6px', textAlign: 'center'}}>
-                              {bunnyUploadStatus === 'requesting' && 'جاري إعداد جلسة الرفع...'}
-                              {bunnyUploadStatus === 'uploading' && `جاري رفع الفيديو مباشرة إلى السيرفر... ${videoUploadProgress}%`}
-                              {bunnyUploadStatus === 'confirming' && 'جاري حفظ البيانات...'}
+                  {activeUploadsCount > 0 && (
+                      <div className="form-group" style={{marginTop: '8px', fontSize: '0.85em'}}>
+                          <small style={{color: 'var(--gold)'}}>
+                              📤 لديك {activeUploadsCount} رفع فيديو جارٍ حالياً — تابعه من النافذة العائمة أسفل الشاشة.
                           </small>
-                          {bunnyUploadStatus === 'uploading' && (
-                              <button
-                                  className="btn-cancel"
-                                  style={{marginTop: '8px', width: '100%'}}
-                                  onClick={() => { cancelBunnyUpload(); resetBunnyUpload(videoFile); }}
-                              >
-                                  إلغاء الرفع
-                              </button>
-                          )}
-                      </div>
-                  )}
-                  {bunnyUploadStatus === 'error' && bunnyUploadError && (
-                      <div className="form-group" style={{marginTop: '8px', fontSize: '0.9em'}}>
-                          <div style={{color: 'var(--danger)'}}>❌ {bunnyUploadError}</div>
                       </div>
                   )}
                   {/* مدة الفيديو: مطلوبة فقط عند استخدام رابط يوتيوب بدون ملف */}
@@ -878,7 +860,6 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                                  min="0" max="99"
                                  value={formData.durHours} 
                                  onChange={e => setFormData({...formData, durHours: e.target.value})} 
-                                 disabled={isUploadingVideo}
                               />
                               <small>ساعات</small>
                           </div>
@@ -893,7 +874,6 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                                  min="0" max="59"
                                  value={formData.durMinutes} 
                                  onChange={e => setFormData({...formData, durMinutes: e.target.value})} 
-                                 disabled={isUploadingVideo}
                               />
                               <small>دقائق</small>
                           </div>
@@ -908,7 +888,6 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                                  min="0" max="59"
                                  value={formData.durSeconds} 
                                  onChange={e => setFormData({...formData, durSeconds: e.target.value})} 
-                                 disabled={isUploadingVideo}
                               />
                               <small>ثواني</small>
                           </div>
@@ -922,7 +901,6 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                             style={{width: '18px', height: '18px', accentColor: 'var(--gold)'}} 
                             checked={formData.notifyStudents} 
                             onChange={e => setFormData({...formData, notifyStudents: e.target.checked})} 
-                            disabled={isUploadingVideo}
                           />
                           <span>إرسال إشعار للطلاب المشتركين في المادة</span>
                       </label>
@@ -931,8 +909,8 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
               )}
               
               <div className="acts">
-                  <button className="btn-cancel" onClick={() => setModalType(null)} disabled={isUploadingVideo}>إلغاء</button>
-                  <button className="btn-primary" disabled={isUploadingVideo} onClick={() => {
+                  <button className="btn-cancel" onClick={() => setModalType(null)}>إلغاء</button>
+                  <button className="btn-primary" onClick={() => {
                       if (modalType === 'add_course') apiCall('create', 'courses', { title: formData.title, price: formData.price, description: formData.description });
                       else if (modalType === 'edit_course') apiCall('update', 'courses', { id: selectedCourse.id, title: formData.title, price: formData.price, description: formData.description });
                       
@@ -943,7 +921,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                       else if (modalType === 'edit_chapter') apiCall('update', 'chapters', { id: selectedChapter.id, title: formData.title });
                       
                       else if (modalType === 'add_video') handleSaveVideo();
-                  }}>{isUploadingVideo ? 'جاري الرفع... ⏳' : 'حفظ'}</button>
+                  }}>حفظ</button>
               </div>
           </Modal>
       )}
@@ -1262,6 +1240,14 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
       )}
 
       {alertData.show && <div className={`alert-toast ${alertData.type}`}>{alertData.msg}</div>}
+
+      {/* ✅ ودجت عائم يعرض كل عمليات رفع الفيديو الجارية/المنتهية في الخلفية */}
+      <UploadQueueWidget
+        uploads={bunnyUploads}
+        onCancel={cancelBunnyUpload}
+        onResume={resumeBunnyUpload}
+        onDismiss={dismissBunnyUpload}
+      />
 
       <style jsx>{`
       /* --- Duration Inputs Styles --- */
