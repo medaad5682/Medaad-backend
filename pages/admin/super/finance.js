@@ -209,11 +209,12 @@ export default function SuperFinance() {
                 body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 24px; background: #fff; color: #1a1508; }
                 .sheet { max-width: 980px; margin: 0 auto; }
 
-                /* ── everything lives inside ONE table. The banner sits in <thead>
-                   and the footer sits in <tfoot>: browsers natively repeat thead/tfoot
-                   content at the top/bottom of EVERY printed page a table spans,
-                   and — unlike position:fixed — they actually reserve that space in
-                   the page layout, so table rows can never render underneath them. */
+                /* ── The banner, dashboard, and footer are plain blocks outside
+                   the table, so they render exactly once (header at the top
+                   of page 1, footer at the end of the last page). The column
+                   header row is a normal <tbody> row (not a native <thead>),
+                   so it also renders once instead of repeating on every
+                   printed page. */
                 .report-table { width:100%; border-collapse: collapse; }
                 .report-table tr { page-break-inside: avoid; break-inside: avoid; }
 
@@ -222,8 +223,8 @@ export default function SuperFinance() {
                 .banner {
                   background: linear-gradient(160deg, #14110c 0%, #000 100%);
                   border: 1px solid #b8903a; border-radius: 18px;
-                  padding: 26px 20px 30px; text-align: center; position: relative; overflow: hidden;
-                  margin-bottom: 22px;
+                  padding: 10px 20px 12px; text-align: center; position: relative; overflow: hidden;
+                  margin-bottom: 14px;
                   page-break-inside: avoid; break-inside: avoid; page-break-after: avoid;
                   -webkit-print-color-adjust: exact; print-color-adjust: exact;
                 }
@@ -231,25 +232,25 @@ export default function SuperFinance() {
                   content: ''; position: absolute; left: 24px; right: 24px; height: 2px;
                   background: linear-gradient(90deg, transparent, var(--gold-light), transparent);
                 }
-                .banner::before { top: 10px; } .banner::after { bottom: 10px; }
+                .banner::before { top: 8px; } .banner::after { bottom: 8px; }
                 .corner { position:absolute; width: 130px; height: 130px; opacity: 0.9; }
                 .corner.tl { top: -8px; left: -8px; transform: scaleX(-1); }
                 .corner.tr { top: -8px; right: -8px; }
-                .brand { display:flex; align-items:center; justify-content:center; margin-bottom: 2px; }
-                .brand-logo { height: 110px; max-width: 320px; object-fit: contain; }
+                .brand { display:flex; align-items:center; justify-content:center; margin-bottom: 0; }
+                .brand-logo { height: 220px; max-width: 320px; object-fit: contain; }
                 .brand-name { font-size: 30px; font-weight: 800; background: linear-gradient(180deg,#f0d896,#b8903a); -webkit-background-clip:text; background-clip:text; color: transparent; letter-spacing: 1px; }
-                .banner h1 { color:#fff; font-size: 22px; margin: 4px 0 4px; font-weight: 800; }
-                .banner .academy { color: var(--gold-light); font-size: 16px; font-weight: 700; margin: 0 0 14px; display:flex; align-items:center; justify-content:center; gap:10px; }
+                .banner h1 { color:#fff; font-size: 20px; margin: 0 0 2px; font-weight: 800; }
+                .banner .academy { color: var(--gold-light); font-size: 15px; font-weight: 700; margin: 0 0 8px; display:flex; align-items:center; justify-content:center; gap:10px; }
                 .banner .academy .deco { color: #8a6e2e; font-size: 12px; }
                 .date-chip {
                   display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.06);
-                  border: 1px solid rgba(184,144,58,0.5); color: #ecdcb2; padding: 7px 18px; border-radius: 30px; font-size: 13px; font-weight: 700;
+                  border: 1px solid rgba(184,144,58,0.5); color: #ecdcb2; padding: 5px 16px; border-radius: 30px; font-size: 12px; font-weight: 700;
                 }
 
                 /* ── STAT CARDS ── */
                 .cards { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 22px; page-break-inside: avoid; break-inside: avoid; }
                 .card { border: 1px solid #e8e0cc; border-radius: 14px; padding: 18px 10px; text-align: center; background:#fff; }
-                .card .icn { width: 46px; height: 46px; border-radius: 50%; background: linear-gradient(160deg,#c9a24c,#9a7527); color:#fff; font-size:20px; display:flex; align-items:center; justify-content:center; margin: 0 auto 10px; -webkit-print-color-adjust:exact; }
+                .card .icn { width: 46px; height: 46px; border-radius: 50%; background: linear-gradient(160deg,#e3c179,#c9a24c); color:#fff; font-size:20px; display:flex; align-items:center; justify-content:center; margin: 0 auto 10px; -webkit-print-color-adjust:exact; }
                 .card .label { color:#7a7368; font-size: 12.5px; font-weight: 700; margin-bottom: 6px; }
                 .card .value { font-size: 21px; font-weight: 800; color:#1a1508; }
                 .card .value.gold { color: var(--gold); } .card .value.red { color: var(--red); } .card .value.green { color: var(--green); }
@@ -388,7 +389,7 @@ export default function SuperFinance() {
                 </div>
 
                 <table class="report-table">
-                  <thead>
+                  <tbody class="col-head-body">
                     <tr class="col-head-row">
                       <th style="width:80px;">التاريخ</th>
                       <th>الطالب</th>
@@ -398,7 +399,7 @@ export default function SuperFinance() {
                       <th>الحالة</th>
                       <th>ملاحظات</th>
                     </tr>
-                  </thead>
+                  </tbody>
 
                   <tbody class="data-body">
                     ${data.requests.map(req => {
