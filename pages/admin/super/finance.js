@@ -213,7 +213,7 @@ export default function SuperFinance() {
                 .banner {
                   background: linear-gradient(160deg, #14110c 0%, #000 100%);
                   border: 1px solid #b8903a; border-radius: 18px;
-                  padding: 34px 20px 26px; text-align: center; position: relative; overflow: hidden;
+                  padding: 26px 20px 30px; text-align: center; position: relative; overflow: hidden;
                   -webkit-print-color-adjust: exact; print-color-adjust: exact;
                 }
                 .banner::before, .banner::after {
@@ -221,11 +221,15 @@ export default function SuperFinance() {
                   background: linear-gradient(90deg, transparent, var(--gold-light), transparent);
                 }
                 .banner::before { top: 10px; } .banner::after { bottom: 10px; }
-                .brand { display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom: 6px; }
-                .brand svg { flex-shrink:0; }
-                .brand-logo { height: 48px; max-width: 220px; object-fit: contain; }
+                .corner { position:absolute; width: 130px; height: 130px; opacity: 0.9; }
+                .corner.tl { top: -8px; left: -8px; transform: scaleX(-1); }
+                .corner.tr { top: -8px; right: -8px; }
+                .corner.bl { bottom: -8px; left: -8px; transform: scale(-1,-1); }
+                .corner.br { bottom: -8px; right: -8px; transform: scaleY(-1); }
+                .brand { display:flex; align-items:center; justify-content:center; margin-bottom: 2px; }
+                .brand-logo { height: 110px; max-width: 320px; object-fit: contain; }
                 .brand-name { font-size: 30px; font-weight: 800; background: linear-gradient(180deg,#f0d896,#b8903a); -webkit-background-clip:text; background-clip:text; color: transparent; letter-spacing: 1px; }
-                .banner h1 { color:#fff; font-size: 22px; margin: 10px 0 4px; font-weight: 800; }
+                .banner h1 { color:#fff; font-size: 22px; margin: 4px 0 4px; font-weight: 800; }
                 .banner .academy { color: var(--gold-light); font-size: 16px; font-weight: 700; margin: 0 0 14px; }
                 .date-chip {
                   display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.06);
@@ -257,18 +261,23 @@ export default function SuperFinance() {
                 .dot { width:11px; height:11px; border-radius:50%; -webkit-print-color-adjust:exact; }
 
                 /* ── TABLE ── */
-                .table-title { font-size: 15px; font-weight:800; color:#333; margin: 4px 0 10px; }
+                .table-wrap { border: 1px solid #ece5d2; border-radius: 14px; overflow: hidden; }
                 table { width:100%; border-collapse: collapse; font-size: 12px; }
-                th, td { border:1px solid #e5decb; padding: 10px 8px; text-align:right; vertical-align: middle; }
-                th { background:#fbf6e8; color: var(--gold); font-weight:800; -webkit-print-color-adjust:exact; }
-                tr.approved td { background: #f4fbf6; -webkit-print-color-adjust:exact; }
-                tr.rejected td { background: #fdf3f3; -webkit-print-color-adjust:exact; }
-                .status-pill { display:inline-block; padding:3px 10px; border-radius:20px; font-weight:800; font-size:11px; -webkit-print-color-adjust:exact; }
+                th, td { border: none; border-bottom: 1px solid #eee7d4; padding: 12px 10px; text-align:right; vertical-align: middle; }
+                tbody tr:last-child td { border-bottom: none; }
+                th { background:#fbf6e8; color: var(--gold); font-weight:800; font-size:11px; -webkit-print-color-adjust:exact; }
+                tr.approved td { background: #f8fdf9; -webkit-print-color-adjust:exact; }
+                tr.rejected td { background: #fef7f7; -webkit-print-color-adjust:exact; }
+                .status-pill { display:inline-flex; align-items:center; gap:4px; padding:4px 12px; border-radius:20px; font-weight:800; font-size:11px; -webkit-print-color-adjust:exact; }
                 .status-pill.approved { background:#dcf6e3; color:#15803d; }
                 .status-pill.rejected { background:#fbdede; color:#b91c1c; }
+                .student-cell { display:flex; align-items:center; gap:8px; }
+                .avatar { width:26px; height:26px; border-radius:50%; background:#eee7d4; color:#8a8375; display:flex; align-items:center; justify-content:center; flex-shrink:0; -webkit-print-color-adjust:exact; }
                 .student-name { font-weight:800; display:block; }
                 .student-user { font-size:11px; color:#8a8375; }
-                .course-line { display:block; font-size:11px; color:#4a4536; margin-bottom:2px; white-space:pre-wrap; }
+                .course-line { display:flex; align-items:center; gap:5px; font-size:11px; color:#4a4536; margin-bottom:3px; }
+                .course-line:last-child { margin-bottom:0; }
+                .course-line .dot-ic { width:14px; text-align:center; flex-shrink:0; }
                 .price-old { color:#9a9384; text-decoration:line-through; }
                 .price-paid { color: var(--green); font-weight:800; }
                 .note-rejected { color: var(--red); font-weight:700; }
@@ -284,13 +293,20 @@ export default function SuperFinance() {
                 .footer-bar .thanks { color: var(--gold-light); font-size:12px; font-weight:800; }
                 .footer-bar .thanks small { display:block; color:#8f8564; font-weight:600; margin-top:2px; }
 
-                @media print { body{ padding:0; } .sheet{ max-width:100%; } }
+                @media print {
+                  body{ padding:0; } .sheet{ max-width:100%; }
+                  .content-area { padding-bottom: 150px; }
+                  .footer-bar { position: fixed; bottom: 0; left: 24px; right: 24px; margin-top: 0; }
+                }
               </style>
             </head>
             <body>
               <div class="sheet">
+                <div class="content-area">
 
                 <div class="banner">
+                  <svg class="corner tl" viewBox="0 0 130 130" fill="none"><path d="M2 90C2 40 40 2 90 2" stroke="url(#g1)" stroke-width="2.5"/><path d="M2 70C2 32 32 2 70 2" stroke="url(#g1)" stroke-width="1.5" opacity="0.6"/><defs><linearGradient id="g1" x1="2" y1="2" x2="90" y2="90"><stop stop-color="#d4af6a"/><stop offset="1" stop-color="#7a5c1e" stop-opacity="0"/></linearGradient></defs></svg>
+                  <svg class="corner tr" viewBox="0 0 130 130" fill="none"><path d="M2 90C2 40 40 2 90 2" stroke="url(#g2)" stroke-width="2.5"/><path d="M2 70C2 32 32 2 70 2" stroke="url(#g2)" stroke-width="1.5" opacity="0.6"/><defs><linearGradient id="g2" x1="2" y1="2" x2="90" y2="90"><stop stop-color="#d4af6a"/><stop offset="1" stop-color="#7a5c1e" stop-opacity="0"/></linearGradient></defs></svg>
                   <div class="brand">
                     <img src="${medaadLogo.src}" alt="مداد" class="brand-logo"
                          onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
@@ -362,6 +378,7 @@ export default function SuperFinance() {
                   </div>
                 </div>
 
+                <div class="table-wrap">
                 <table>
                   <thead>
                     <tr>
@@ -380,15 +397,21 @@ export default function SuperFinance() {
                        const act = req.actual_paid_price !== null ? req.actual_paid_price : orig;
                        const hasCustomPrice = req.actual_paid_price !== null;
                        const isRejected = req.status === 'rejected';
+                       const lineIcons = ['📘','🏅','🌿'];
                        const courseLines = (req.course_title || '').split('\n').filter(Boolean)
-                         .map(line => `<span class="course-line">${line}</span>`).join('');
+                         .map((line, i) => `<span class="course-line"><span class="dot-ic">${lineIcons[i % lineIcons.length]}</span>${line.replace(/^[^\u0600-\u0669a-zA-Z]*/, '')}</span>`).join('');
 
                        return `
                       <tr class="${req.status}">
                         <td>${fmtDate(req.created_at)}</td>
                         <td>
-                          <span class="student-name">👤 ${req.user_name || 'بدون اسم'}</span>
-                          <span class="student-user">${req.user_username ? `@${req.user_username}` : ''}</span>
+                          <div class="student-cell">
+                            <span class="avatar">👤</span>
+                            <div>
+                              <span class="student-name">${req.user_name || 'بدون اسم'}</span>
+                              <span class="student-user">${req.user_username ? `${req.user_username}` : ''}</span>
+                            </div>
+                          </div>
                         </td>
                         <td>${courseLines}</td>
                         <td class="${hasCustomPrice ? 'price-old' : ''}">${fmt(orig)} ج.م</td>
@@ -400,6 +423,8 @@ export default function SuperFinance() {
                     }).join('')}
                   </tbody>
                 </table>
+                </div>
+                </div>
 
                 <div class="footer-bar">
                   <div>
