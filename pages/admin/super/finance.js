@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import SuperLayout from '../../../components/SuperLayout';
+import medaadLogo from '../../../styles/medaad-logo.png';
 
 // ─── SVG Icons ──────────────────────────────────────────
 const WalletIcon = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path><path d="M4 6v12c0 1.1.9 2 2 2h14v-4"></path><path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z"></path></svg>);
@@ -85,7 +86,7 @@ export default function SuperFinance() {
         </head>
         <body>
           <div class="header-container">
-             <img src="/logo.png" alt="Logo" class="logo" onerror="this.style.display='none'" />
+             <img src="${medaadLogo.src}" alt="Logo" class="logo" onerror="this.style.display='none'" />
              <h1>التقرير المالي الشامل</h1>
              <p>الفترة من: ${dateRange.startDate} إلى: ${dateRange.endDate}</p>
           </div>
@@ -157,128 +158,271 @@ export default function SuperFinance() {
 
         const totalOriginal = data.summary.total_original_amount || 0;
         const totalActual = data.summary.total_actual_amount || 0;
-        const platformShare = totalActual * percentage; 
+        const platformShare = Math.round(totalActual * percentage);
         const netProfit = totalActual - platformShare;
+
+        const approvedCount = data.summary.total_approved_count || 0;
+        const rejectedCount = data.summary.total_rejected_count || 0;
+        const totalCount = approvedCount + rejectedCount;
+        const approvedPct = totalCount > 0 ? (approvedCount / totalCount) * 100 : 0;
+        const rejectedPct = totalCount > 0 ? (rejectedCount / totalCount) * 100 : 0;
+        const avgOrderValue = approvedCount > 0 ? Math.round(totalActual / approvedCount) : 0;
+
+        // ── تحديد أعلى كورس مبيعاً من بين الطلبات المقبولة ──
+        const courseFreq = {};
+        data.requests.forEach(r => {
+          if (r.status !== 'approved') return;
+          const firstLine = (r.course_title || '').split('\n')[0]
+            .replace(/^[^\u0600-\u0669a-zA-Z]*/, '') // إزالة الإيموجي من البداية
+            .replace(/^(كورس شامل|مادة|عنصر)\s*:\s*/,'')
+            .trim();
+          if (!firstLine) return;
+          courseFreq[firstLine] = (courseFreq[firstLine] || 0) + 1;
+        });
+        let bestCourseName = '—', bestCourseCount = 0;
+        Object.entries(courseFreq).forEach(([name, count]) => {
+          if (count > bestCourseCount) { bestCourseName = name; bestCourseCount = count; }
+        });
+
+        const fmt = (n) => Math.round(n).toLocaleString('en-US');
+        const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB').replace(/\//g, '-');
 
         const safeName = data.teacherName.replace(/\s+/g, '_');
         const fileName = `تقرير_${safeName}_${dateRange.startDate}_${dateRange.endDate}`;
 
+        // ── رسم الدونات SVG لتوزيع الطلبات ──
+        const R = 60, C = 2 * Math.PI * R;
+        const approvedDash = (approvedPct / 100) * C;
+
         const printWindow = window.open('', '_blank');
         const htmlContent = `
-          <html dir="rtl">
+          <html dir="rtl" lang="ar">
             <head>
-              <title>${fileName}</title> 
+              <meta charset="UTF-8" />
+              <title>${fileName}</title>
               <style>
-                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; color: #1a1508; }
-                .header-container { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #e5daba; padding-bottom: 20px; }
-                .logo { max-height: 80px; margin-bottom: 10px; }
-                h2 { text-align: center; color: #333; margin-bottom: 5px; margin-top: 0; }
-                p.meta { text-align: center; color: #666; margin-top: 0; font-weight: bold; }
-                
-                table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; }
-                th, td { border: 1px solid #ccc; padding: 10px; text-align: right; vertical-align: middle; }
-                th { background-color: #fbf8f1; color: #b8903a; font-weight: bold; -webkit-print-color-adjust: exact; }
-                
-                .approved { background-color: #f0fdf4 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } 
-                .rejected { background-color: #fef2f2 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-                
-                .summary { 
-                    margin: 20px 0; 
-                    padding: 20px; 
-                    border: 1px solid #e5daba; 
-                    background-color: #faf8f0;
-                    display: flex;
-                    justify-content: space-between;
-                    -webkit-print-color-adjust: exact;
-                    border-radius: 8px;
+                :root {
+                  --gold: #b8903a; --gold-light: #d4af6a; --ink: #14110c;
+                  --green: #16a34a; --red: #dc2626;
                 }
-                .summary-col { flex: 1; text-align: center; }
-                .summary-col.border { border-left: 1px solid #e5daba; } 
-                
-                .val { font-weight: bold; font-size: 1.1em; display: block; margin-top: 5px; }
-                .val.muted { color: #888; font-size: 0.9em; text-decoration: line-through; }
-                .green { color: #16a34a; }
-                .gold { color: #b8903a; }
-                .red { color: #dc2626; }
-                
-                .info-row { margin-bottom: 5px; font-size: 14px; font-weight: bold; color: #444; }
-                
-                .user-info { font-weight: bold; }
-                .username { font-size: 0.85em; color: #777; display: block; }
+                * { box-sizing: border-box; }
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 24px; background: #fff; color: #1a1508; }
+                .sheet { max-width: 980px; margin: 0 auto; }
+
+                /* ── HEADER BANNER ── */
+                .banner {
+                  background: linear-gradient(160deg, #14110c 0%, #000 100%);
+                  border: 1px solid #b8903a; border-radius: 18px;
+                  padding: 34px 20px 26px; text-align: center; position: relative; overflow: hidden;
+                  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+                }
+                .banner::before, .banner::after {
+                  content: ''; position: absolute; left: 24px; right: 24px; height: 2px;
+                  background: linear-gradient(90deg, transparent, var(--gold-light), transparent);
+                }
+                .banner::before { top: 10px; } .banner::after { bottom: 10px; }
+                .brand { display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom: 6px; }
+                .brand svg { flex-shrink:0; }
+                .brand-logo { height: 48px; max-width: 220px; object-fit: contain; }
+                .brand-name { font-size: 30px; font-weight: 800; background: linear-gradient(180deg,#f0d896,#b8903a); -webkit-background-clip:text; background-clip:text; color: transparent; letter-spacing: 1px; }
+                .banner h1 { color:#fff; font-size: 22px; margin: 10px 0 4px; font-weight: 800; }
+                .banner .academy { color: var(--gold-light); font-size: 16px; font-weight: 700; margin: 0 0 14px; }
+                .date-chip {
+                  display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.06);
+                  border: 1px solid rgba(184,144,58,0.5); color: #ecdcb2; padding: 7px 18px; border-radius: 30px; font-size: 13px; font-weight: 700;
+                }
+
+                /* ── STAT CARDS ── */
+                .cards { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin: 22px 0; }
+                .card { border: 1px solid #e8e0cc; border-radius: 14px; padding: 18px 10px; text-align: center; background:#fff; }
+                .card .icn { width: 46px; height: 46px; border-radius: 50%; background:#f7edd7; color:var(--gold); display:flex; align-items:center; justify-content:center; margin: 0 auto 10px; -webkit-print-color-adjust:exact; }
+                .card .label { color:#7a7368; font-size: 12.5px; font-weight: 700; margin-bottom: 6px; }
+                .card .value { font-size: 21px; font-weight: 800; color:#1a1508; }
+                .card .value.gold { color: var(--gold); } .card .value.red { color: var(--red); } .card .value.green { color: var(--green); }
+                .card .subline { display:flex; justify-content:center; gap:14px; margin-top:6px; font-weight:800; font-size:14px; }
+                .subline .ok { color: var(--green); } .subline .no { color: var(--red); }
+
+                /* ── SUMMARY + DONUT ── */
+                .two-col { display:grid; grid-template-columns: 1.3fr 1fr; gap: 16px; margin-bottom: 22px; }
+                .panel { border:1px solid #e8e0cc; border-radius: 14px; padding: 20px; }
+                .panel h3 { margin:0 0 16px; font-size:15px; color:#333; border-bottom:2px solid var(--gold); display:inline-block; padding-bottom:6px; }
+                .bar-row { margin-bottom: 16px; }
+                .bar-head { display:flex; justify-content:space-between; font-size:13px; font-weight:700; margin-bottom:6px; }
+                .bar-track { background:#f0ece0; border-radius:8px; height:9px; overflow:hidden; -webkit-print-color-adjust:exact; }
+                .bar-fill { height:100%; border-radius:8px; -webkit-print-color-adjust:exact; }
+                .bar-fill.gold { background: var(--gold); } .bar-fill.green { background: var(--green); } .bar-fill.red { background: var(--red); }
+
+                .donut-wrap { display:flex; align-items:center; justify-content:center; gap: 22px; }
+                .legend-item { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; margin-bottom:10px; }
+                .dot { width:11px; height:11px; border-radius:50%; -webkit-print-color-adjust:exact; }
+
+                /* ── TABLE ── */
+                .table-title { font-size: 15px; font-weight:800; color:#333; margin: 4px 0 10px; }
+                table { width:100%; border-collapse: collapse; font-size: 12px; }
+                th, td { border:1px solid #e5decb; padding: 10px 8px; text-align:right; vertical-align: middle; }
+                th { background:#fbf6e8; color: var(--gold); font-weight:800; -webkit-print-color-adjust:exact; }
+                tr.approved td { background: #f4fbf6; -webkit-print-color-adjust:exact; }
+                tr.rejected td { background: #fdf3f3; -webkit-print-color-adjust:exact; }
+                .status-pill { display:inline-block; padding:3px 10px; border-radius:20px; font-weight:800; font-size:11px; -webkit-print-color-adjust:exact; }
+                .status-pill.approved { background:#dcf6e3; color:#15803d; }
+                .status-pill.rejected { background:#fbdede; color:#b91c1c; }
+                .student-name { font-weight:800; display:block; }
+                .student-user { font-size:11px; color:#8a8375; }
+                .course-line { display:block; font-size:11px; color:#4a4536; margin-bottom:2px; white-space:pre-wrap; }
+                .price-old { color:#9a9384; text-decoration:line-through; }
+                .price-paid { color: var(--green); font-weight:800; }
+                .note-rejected { color: var(--red); font-weight:700; }
+
+                /* ── FOOTER BAR ── */
+                .footer-bar {
+                  margin-top: 22px; background: linear-gradient(160deg, #14110c 0%, #000 100%); border:1px solid #b8903a;
+                  border-radius: 14px; padding: 16px 10px; display:grid; grid-template-columns: repeat(4,1fr);
+                  gap: 10px; text-align:center; -webkit-print-color-adjust:exact;
+                }
+                .footer-bar .f-label { color:#a89a72; font-size:11px; font-weight:700; margin-bottom:4px; }
+                .footer-bar .f-value { color:#f3e4bb; font-size:13px; font-weight:800; }
+                .footer-bar .thanks { color: var(--gold-light); font-size:12px; font-weight:800; }
+                .footer-bar .thanks small { display:block; color:#8f8564; font-weight:600; margin-top:2px; }
+
+                @media print { body{ padding:0; } .sheet{ max-width:100%; } }
               </style>
             </head>
             <body>
-              <div class="header-container">
-                 <img src="/logo.png" alt="Logo" class="logo" onerror="this.style.display='none'" />
-                 <h2>تقرير حسابات مدرس</h2>
-                 <h3 style="margin:5px 0; color:#b8903a; font-size: 24px;">${data.teacherName}</h3>
-                 <p class="meta">الفترة من ${dateRange.startDate} إلى ${dateRange.endDate}</p>
-              </div>
+              <div class="sheet">
 
-              <div class="summary">
-                <div class="summary-col border">
-                    <div class="info-row">مقبول / مرفوض</div>
-                    <span class="val green">${data.summary.total_approved_count} مقبول</span>
-                    <span class="val red">${data.summary.total_rejected_count} مرفوض</span>
-                </div>
-                
-                <div class="summary-col border">
-                    <div class="info-row">إجمالي المبيعات (الفعلي)</div>
-                    <span class="val muted">${totalOriginal.toLocaleString()} ج.م (افتراضي)</span>
-                    <span class="val green">${totalActual.toLocaleString()} ج.م</span>
+                <div class="banner">
+                  <div class="brand">
+                    <img src="${medaadLogo.src}" alt="مداد" class="brand-logo"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                    <span class="brand-name" style="display:none;">مداد</span>
+                  </div>
+                  <h1>تقرير حسابات مدرس</h1>
+                  <p class="academy">${data.teacherName}</p>
+                  <span class="date-chip">📅 الفترة من ${dateRange.startDate} إلى ${dateRange.endDate}</span>
                 </div>
 
-                <div class="summary-col border">
-                    <div class="info-row">حصة المنصة (${percentageDisplay}%)</div>
-                    <span class="val red">${platformShare.toLocaleString()} ج.م</span>
+                <div class="cards">
+                  <div class="card">
+                    <div class="icn">👛</div>
+                    <div class="label">صافي المستحق للمدرس</div>
+                    <div class="value gold">${fmt(netProfit)} ج.م</div>
+                  </div>
+                  <div class="card">
+                    <div class="icn">%</div>
+                    <div class="label">عمولة منصة مداد (${percentageDisplay}%)</div>
+                    <div class="value red">${fmt(platformShare)} ج.م</div>
+                  </div>
+                  <div class="card">
+                    <div class="icn">🛒</div>
+                    <div class="label">إجمالي المبيعات (الفعلية)</div>
+                    <div class="value green">${fmt(totalActual)} ج.م</div>
+                  </div>
+                  <div class="card">
+                    <div class="icn">📋</div>
+                    <div class="label">إجمالي الطلبات</div>
+                    <div class="subline">
+                      <span class="ok">✔ ${approvedCount} مقبول</span>
+                      <span class="no">✘ ${rejectedCount} مرفوض</span>
+                    </div>
+                  </div>
                 </div>
 
-                <div class="summary-col">
-                    <div class="info-row">صافي المستحق للمدرس</div>
-                    <span class="val gold" style="font-size:1.4em">${netProfit.toLocaleString()} ج.م</span>
+                <div class="two-col">
+                  <div class="panel">
+                    <h3>ملخص الفترة</h3>
+                    <div class="bar-row">
+                      <div class="bar-head"><span>💼 إجمالي المبيعات</span><span>${fmt(totalActual)} ج.م</span></div>
+                      <div class="bar-track"><div class="bar-fill gold" style="width:100%"></div></div>
+                    </div>
+                    <div class="bar-row">
+                      <div class="bar-head"><span>✅ الطلبات المقبولة</span><span>${approvedCount} طلب</span></div>
+                      <div class="bar-track"><div class="bar-fill green" style="width:${approvedPct}%"></div></div>
+                    </div>
+                    <div class="bar-row">
+                      <div class="bar-head"><span>❌ الطلبات المرفوضة</span><span>${rejectedCount} طلب</span></div>
+                      <div class="bar-track"><div class="bar-fill red" style="width:${rejectedPct}%"></div></div>
+                    </div>
+                  </div>
+
+                  <div class="panel">
+                    <h3>توزيع الطلبات</h3>
+                    <div class="donut-wrap">
+                      <svg width="150" height="150" viewBox="0 0 150 150">
+                        <circle cx="75" cy="75" r="${R}" fill="none" stroke="#dc2626" stroke-width="22"/>
+                        <circle cx="75" cy="75" r="${R}" fill="none" stroke="#16a34a" stroke-width="22"
+                          stroke-dasharray="${approvedDash} ${C}" stroke-dashoffset="0" transform="rotate(-90 75 75)"/>
+                        <circle cx="75" cy="75" r="38" fill="#fff" stroke="#f0ece0" stroke-width="1"/>
+                        <text x="75" y="80" text-anchor="middle" font-size="22">📋</text>
+                      </svg>
+                      <div>
+                        <div class="legend-item"><span class="dot" style="background:#16a34a"></span> مقبول ${approvedPct.toFixed(1)}% (${approvedCount})</div>
+                        <div class="legend-item"><span class="dot" style="background:#dc2626"></span> مرفوض ${rejectedPct.toFixed(1)}% (${rejectedCount})</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              <table>
-                <thead>
-                  <tr>
-                    <th style="width: 80px;">التاريخ</th>
-                    <th>الطالب</th>
-                    <th>المحتوى</th>
-                    <th>السعر المطلوب</th>
-                    <th>المدفوع فعلياً</th>
-                    <th>الحالة</th>
-                    <th>ملاحظة الطالب</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${data.requests.map(req => {
-                     const orig = req.total_price || 0;
-                     const act = req.actual_paid_price !== null ? req.actual_paid_price : orig;
-                     const hasCustomPrice = req.actual_paid_price !== null;
-
-                     return `
-                    <tr class="${req.status}">
-                      <td>${new Date(req.created_at).toLocaleDateString('ar-EG')}</td>
-                      <td>
-                        <span class="user-info">${req.user_name || 'بدون اسم'}</span>
-                        <span class="username">${req.user_username ? `(${req.user_username})` : ''}</span>
-                      </td>
-                      <td>${req.course_title}</td>
-                      <td style="${hasCustomPrice ? 'text-decoration:line-through;color:#888;' : ''}">${orig}</td>
-                      <td style="font-weight:bold; color:#16a34a;">${act}</td>
-                      <td>${req.status === 'approved' ? '✅ مقبول' : '❌ مرفوض'}</td>
-                      <td>${req.user_note || '-'}</td>
+                <table>
+                  <thead>
+                    <tr>
+                      <th style="width:80px;">التاريخ</th>
+                      <th>الطالب</th>
+                      <th>الكورس / المواد</th>
+                      <th>السعر الأصلي</th>
+                      <th>المدفوع فعلياً</th>
+                      <th>الحالة</th>
+                      <th>ملاحظات</th>
                     </tr>
-                    `;
-                  }).join('')}
-                </tbody>
-              </table>
-              
-              <div style="margin-top: 30px; text-align: center; font-size: 12px; color: #777;">
-                تم استخراج هذا التقرير بتاريخ: ${new Date().toLocaleDateString('ar-EG')}
-              </div>
+                  </thead>
+                  <tbody>
+                    ${data.requests.map(req => {
+                       const orig = req.total_price || 0;
+                       const act = req.actual_paid_price !== null ? req.actual_paid_price : orig;
+                       const hasCustomPrice = req.actual_paid_price !== null;
+                       const isRejected = req.status === 'rejected';
+                       const courseLines = (req.course_title || '').split('\n').filter(Boolean)
+                         .map(line => `<span class="course-line">${line}</span>`).join('');
 
+                       return `
+                      <tr class="${req.status}">
+                        <td>${fmtDate(req.created_at)}</td>
+                        <td>
+                          <span class="student-name">👤 ${req.user_name || 'بدون اسم'}</span>
+                          <span class="student-user">${req.user_username ? `@${req.user_username}` : ''}</span>
+                        </td>
+                        <td>${courseLines}</td>
+                        <td class="${hasCustomPrice ? 'price-old' : ''}">${fmt(orig)} ج.م</td>
+                        <td class="price-paid">${fmt(act)} ج.م</td>
+                        <td><span class="status-pill ${req.status}">${req.status === 'approved' ? '✅ مقبول' : '❌ مرفوض'}</span></td>
+                        <td class="${isRejected ? 'note-rejected' : ''}">${req.user_note || '—'}</td>
+                      </tr>
+                      `;
+                    }).join('')}
+                  </tbody>
+                </table>
+
+                <div class="footer-bar">
+                  <div>
+                    <div class="f-label">🏅 أعلى كورس مبيعاً</div>
+                    <div class="f-value">${bestCourseName}</div>
+                    <div class="f-label">${bestCourseCount} طلبات</div>
+                  </div>
+                  <div>
+                    <div class="f-label">💳 متوسط قيمة الطلب</div>
+                    <div class="f-value">${fmt(avgOrderValue)} ج.م</div>
+                  </div>
+                  <div>
+                    <div class="f-label">📅 تاريخ إنشاء التقرير</div>
+                    <div class="f-value">${new Date().toLocaleDateString('ar-EG', { day:'2-digit', month:'long', year:'numeric' })}</div>
+                    <div class="f-label">${new Date().toLocaleTimeString('ar-EG', { hour:'2-digit', minute:'2-digit' })}</div>
+                  </div>
+                  <div class="thanks">
+                    🪶 شكراً لثقتك في مداد
+                    <small>نسعى دائماً لنجاحك</small>
+                  </div>
+                </div>
+
+              </div>
               <script>
                 window.onload = function() { window.print(); }
               </script>
