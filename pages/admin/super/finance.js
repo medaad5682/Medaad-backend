@@ -262,11 +262,9 @@ export default function SuperFinance() {
 
                 /* ── TABLE ── */
                 .table-wrap { border: 1px solid #d9cfa8; border-radius: 10px; overflow: hidden; }
-                table { width:100%; border-collapse: collapse; font-size: 12px; }
-                th, td { border: 1px solid #e5decb; padding: 10px 8px; text-align:right; vertical-align: middle; }
-                th { background:#fbf6e8; color: var(--gold); font-weight:800; font-size:11.5px; -webkit-print-color-adjust:exact; }
-                tr.approved td { background: #f8fdf9; -webkit-print-color-adjust:exact; }
-                tr.rejected td { background: #fef2f2; -webkit-print-color-adjust:exact; }
+                table { width:100%; border-collapse: collapse; font-size: 12px; background:#fff; }
+                th, td { border: 1px solid #e5decb; padding: 10px 8px; text-align:right; vertical-align: middle; background:#fff; -webkit-print-color-adjust:exact; }
+                th { background:#fbf6e8; color: var(--gold); font-weight:800; font-size:11.5px; }
                 .status-pill { display:inline-flex; align-items:center; gap:4px; padding:4px 12px; border-radius:20px; font-weight:800; font-size:11px; -webkit-print-color-adjust:exact; }
                 .status-pill.approved { background:#dcf6e3; color:#15803d; }
                 .status-pill.rejected { background:#fbdede; color:#b91c1c; }
@@ -278,7 +276,8 @@ export default function SuperFinance() {
                 .course-line:last-child { margin-bottom:0; }
                 .course-line .dot-ic { width:14px; text-align:center; flex-shrink:0; }
                 .price-old { color:#9a9384; text-decoration:line-through; }
-                .price-paid { color: var(--green); font-weight:800; }
+                .price-paid.approved { color: var(--green); font-weight:800; }
+                .price-paid.rejected { color: var(--red); font-weight:800; }
                 .note-rejected { color: var(--red); font-weight:700; }
 
                 /* ── FOOTER BAR ── */
@@ -293,10 +292,17 @@ export default function SuperFinance() {
                 .footer-bar .thanks small { display:block; color:#8f8564; font-weight:600; margin-top:2px; }
 
                 @media print {
-                  body{ padding:0; } .sheet{ max-width:100%; }
-                  .banner { position: fixed; top: 0; left: 24px; right: 24px; margin-bottom: 0; z-index: 10; }
-                  .content-area { padding-top: 250px; padding-bottom: 150px; }
-                  .footer-bar { position: fixed; bottom: 0; left: 24px; right: 24px; margin-top: 0; z-index: 10; }
+                  /* ── reserve real per-page space for the fixed header/footer ──
+                     @page margins are re-applied by the browser on EVERY physical page,
+                     unlike a one-time padding on the flowing content (which only
+                     affected page 1). Fixed elements are positioned against the full
+                     page box, so top:0 / bottom:0 here sit inside that reserved band
+                     on every page, and never overlap the table rows. */
+                  @page { margin: 250px 20px 160px 20px; }
+                  html, body { margin:0; padding:0; }
+                  .sheet{ max-width:100%; }
+                  .banner { position: fixed; top: 0; left: 0; right: 0; margin:0; border-radius:0; z-index: 10; }
+                  .footer-bar { position: fixed; bottom: 0; left: 0; right: 0; margin:0; border-radius:0; z-index: 10; }
                 }
               </style>
             </head>
@@ -415,7 +421,7 @@ export default function SuperFinance() {
                         </td>
                         <td>${courseLines}</td>
                         <td class="${hasCustomPrice ? 'price-old' : ''}">${fmt(orig)} ج.م</td>
-                        <td class="price-paid">${fmt(act)} ج.م</td>
+                        <td class="price-paid ${req.status}">${fmt(act)} ج.م</td>
                         <td><span class="status-pill ${req.status}">${req.status === 'approved' ? '✅ مقبول' : '❌ مرفوض'}</span></td>
                         <td class="${isRejected ? 'note-rejected' : ''}">${req.user_note || '—'}</td>
                       </tr>
