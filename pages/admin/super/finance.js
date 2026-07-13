@@ -218,21 +218,14 @@ export default function SuperFinance() {
                 .report-table { width:100%; border-collapse: collapse; }
                 .report-table tr { page-break-inside: avoid; break-inside: avoid; }
 
-                /* ── HEADER: a logo row (plain, on the white page) sits above
-                   a compact black band. Splitting them this way means the
-                   logo can be large without forcing the band to grow — the
-                   band only has to fit the title/subtitle/date-chip, so its
-                   own height stays short, roughly double the footer's. Both
-                   are plain blocks before the table, rendering once at the
-                   top of page 1. ── */
-                .logo-row { text-align:center; margin-bottom: 6px; page-break-after: avoid; }
-                .brand-logo { height: 220px; max-width: 340px; object-fit: contain; }
-                .brand-name { font-size: 46px; font-weight: 900; color: var(--gold); letter-spacing: 1px; }
-
+                /* ── HEADER BANNER (plain block, sits before the table so it
+                   only ever renders once — at the top of the first page).
+                   The logo lives inside it again; sized to stay clearly
+                   larger than the original while keeping the band compact. ── */
                 .banner {
                   background: linear-gradient(160deg, #14110c 0%, #000 100%);
                   border: 1px solid #b8903a; border-radius: 18px;
-                  padding: 12px 20px; text-align: center; position: relative; overflow: hidden;
+                  padding: 10px 20px 12px; text-align: center; position: relative; overflow: hidden;
                   margin-bottom: 14px;
                   page-break-inside: avoid; break-inside: avoid; page-break-after: avoid;
                   -webkit-print-color-adjust: exact; print-color-adjust: exact;
@@ -242,9 +235,12 @@ export default function SuperFinance() {
                   background: linear-gradient(90deg, transparent, var(--gold-light), transparent);
                 }
                 .banner::before { top: 8px; } .banner::after { bottom: 8px; }
-                .corner { position:absolute; width: 90px; height: 90px; opacity: 0.9; }
+                .corner { position:absolute; width: 100px; height: 100px; opacity: 0.9; }
                 .corner.tl { top: -6px; left: -6px; transform: scaleX(-1); }
                 .corner.tr { top: -6px; right: -6px; }
+                .brand { display:flex; align-items:center; justify-content:center; margin-bottom: 0; }
+                .brand-logo { height: 130px; max-width: 320px; object-fit: contain; }
+                .brand-name { font-size: 34px; font-weight: 800; background: linear-gradient(180deg,#f0d896,#b8903a); -webkit-background-clip:text; background-clip:text; color: transparent; letter-spacing: 1px; }
                 .banner h1 { color:#fff; font-size: 20px; margin: 0 0 3px; font-weight: 800; }
                 .banner .academy { color: var(--gold-light); font-size: 15px; font-weight: 700; margin: 0 0 8px; display:flex; align-items:center; justify-content:center; gap:10px; }
                 .banner .academy .deco { color: #8a6e2e; font-size: 12px; }
@@ -319,14 +315,14 @@ export default function SuperFinance() {
                 <!-- ── HEADER: logo row + compact band, plain blocks (not
                      part of the table), so they appear exactly once, at the
                      top of the first page ── -->
-                <div class="logo-row">
-                  <img src="${medaadLogo.src}" alt="مداد" class="brand-logo"
-                       onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
-                  <span class="brand-name" style="display:none;">مداد</span>
-                </div>
                 <div class="banner">
                   <svg class="corner tl" viewBox="0 0 130 130" fill="none"><path d="M2 90C2 40 40 2 90 2" stroke="url(#g1)" stroke-width="2.5"/><path d="M2 70C2 32 32 2 70 2" stroke="url(#g1)" stroke-width="1.5" opacity="0.6"/><defs><linearGradient id="g1" x1="2" y1="2" x2="90" y2="90"><stop stop-color="#d4af6a"/><stop offset="1" stop-color="#7a5c1e" stop-opacity="0"/></linearGradient></defs></svg>
                   <svg class="corner tr" viewBox="0 0 130 130" fill="none"><path d="M2 90C2 40 40 2 90 2" stroke="url(#g2)" stroke-width="2.5"/><path d="M2 70C2 32 32 2 70 2" stroke="url(#g2)" stroke-width="1.5" opacity="0.6"/><defs><linearGradient id="g2" x1="2" y1="2" x2="90" y2="90"><stop stop-color="#d4af6a"/><stop offset="1" stop-color="#7a5c1e" stop-opacity="0"/></linearGradient></defs></svg>
+                  <div class="brand">
+                    <img src="${medaadLogo.src}" alt="مداد" class="brand-logo"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                    <span class="brand-name" style="display:none;">مداد</span>
+                  </div>
                   <h1>تقرير حسابات مدرس</h1>
                   <p class="academy"><span class="deco">✦</span>${data.teacherName}<span class="deco">✦</span></p>
                   <span class="date-chip">📅 الفترة من ${dateRange.startDate} إلى ${dateRange.endDate}</span>
