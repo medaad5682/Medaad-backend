@@ -215,16 +215,16 @@ export default function SuperFinance() {
                    and — unlike position:fixed — they actually reserve that space in
                    the page layout, so table rows can never render underneath them. */
                 .report-table { width:100%; border-collapse: collapse; }
-                .report-table tr { page-break-inside: avoid; }
+                .report-table tr { page-break-inside: avoid; break-inside: avoid; }
 
-                /* wrapper cells (banner / dashboard / footer) — no cell borders */
-                .banner-cell, .dash-cell, .footer-cell { border: none !important; padding: 0 !important; background: transparent !important; }
-
-                /* ── HEADER BANNER ── */
+                /* ── HEADER BANNER (plain block, sits before the table so it
+                   only ever renders once — at the top of the first page) ── */
                 .banner {
                   background: linear-gradient(160deg, #14110c 0%, #000 100%);
                   border: 1px solid #b8903a; border-radius: 18px;
                   padding: 26px 20px 30px; text-align: center; position: relative; overflow: hidden;
+                  margin-bottom: 22px;
+                  page-break-inside: avoid; break-inside: avoid; page-break-after: avoid;
                   -webkit-print-color-adjust: exact; print-color-adjust: exact;
                 }
                 .banner::before, .banner::after {
@@ -239,17 +239,17 @@ export default function SuperFinance() {
                 .brand-logo { height: 110px; max-width: 320px; object-fit: contain; }
                 .brand-name { font-size: 30px; font-weight: 800; background: linear-gradient(180deg,#f0d896,#b8903a); -webkit-background-clip:text; background-clip:text; color: transparent; letter-spacing: 1px; }
                 .banner h1 { color:#fff; font-size: 22px; margin: 4px 0 4px; font-weight: 800; }
-                .banner .academy { color: var(--gold-light); font-size: 16px; font-weight: 700; margin: 0 0 14px; }
+                .banner .academy { color: var(--gold-light); font-size: 16px; font-weight: 700; margin: 0 0 14px; display:flex; align-items:center; justify-content:center; gap:10px; }
+                .banner .academy .deco { color: #8a6e2e; font-size: 12px; }
                 .date-chip {
                   display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.06);
                   border: 1px solid rgba(184,144,58,0.5); color: #ecdcb2; padding: 7px 18px; border-radius: 30px; font-size: 13px; font-weight: 700;
                 }
-                .banner-cell { padding-bottom: 16px !important; }
 
                 /* ── STAT CARDS ── */
-                .cards { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 22px; }
+                .cards { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 22px; page-break-inside: avoid; break-inside: avoid; }
                 .card { border: 1px solid #e8e0cc; border-radius: 14px; padding: 18px 10px; text-align: center; background:#fff; }
-                .card .icn { width: 46px; height: 46px; border-radius: 50%; background:#f7edd7; color:var(--gold); display:flex; align-items:center; justify-content:center; margin: 0 auto 10px; -webkit-print-color-adjust:exact; }
+                .card .icn { width: 46px; height: 46px; border-radius: 50%; background: linear-gradient(160deg,#c9a24c,#9a7527); color:#fff; font-size:20px; display:flex; align-items:center; justify-content:center; margin: 0 auto 10px; -webkit-print-color-adjust:exact; }
                 .card .label { color:#7a7368; font-size: 12.5px; font-weight: 700; margin-bottom: 6px; }
                 .card .value { font-size: 21px; font-weight: 800; color:#1a1508; }
                 .card .value.gold { color: var(--gold); } .card .value.red { color: var(--red); } .card .value.green { color: var(--green); }
@@ -257,7 +257,7 @@ export default function SuperFinance() {
                 .subline .ok { color: var(--green); } .subline .no { color: var(--red); }
 
                 /* ── SUMMARY + DONUT ── */
-                .two-col { display:grid; grid-template-columns: 1.3fr 1fr; gap: 16px; margin-bottom: 20px; }
+                .two-col { display:grid; grid-template-columns: 1.3fr 1fr; gap: 16px; margin-bottom: 20px; page-break-inside: avoid; break-inside: avoid; }
                 .panel { border:1px solid #e8e0cc; border-radius: 14px; padding: 20px; }
                 .panel h3 { margin:0 0 16px; font-size:15px; color:#333; border-bottom:2px solid var(--gold); display:inline-block; padding-bottom:6px; }
                 .bar-row { margin-bottom: 16px; }
@@ -288,17 +288,18 @@ export default function SuperFinance() {
                 .price-paid.rejected { color: var(--red); font-weight:800; }
                 .note-rejected { color: var(--red); font-weight:700; }
 
-                /* ── FOOTER BAR ── */
+                /* ── FOOTER BAR (plain block after the table — renders once,
+                   naturally falling on the last printed page) ── */
                 .footer-bar {
                   margin-top: 20px; background: linear-gradient(160deg, #14110c 0%, #000 100%); border:1px solid #b8903a;
                   border-radius: 14px; padding: 16px 10px; display:grid; grid-template-columns: repeat(4,1fr);
-                  gap: 10px; text-align:center; -webkit-print-color-adjust:exact;
+                  gap: 10px; text-align:center; page-break-inside: avoid; break-inside: avoid;
+                  -webkit-print-color-adjust:exact;
                 }
                 .footer-bar .f-label { color:#a89a72; font-size:11px; font-weight:700; margin-bottom:4px; }
                 .footer-bar .f-value { color:#f3e4bb; font-size:13px; font-weight:800; }
                 .footer-bar .thanks { color: var(--gold-light); font-size:12px; font-weight:800; }
                 .footer-bar .thanks small { display:block; color:#8f8564; font-weight:600; margin-top:2px; }
-                .footer-cell { padding-top: 16px !important; }
 
                 @media print {
                   body{ padding:0; } .sheet{ max-width:100%; }
@@ -307,24 +308,87 @@ export default function SuperFinance() {
             </head>
             <body>
               <div class="sheet">
+
+                <!-- ── HEADER: plain block, not part of the table, so it
+                     appears exactly once, at the top of the first page ── -->
+                <div class="banner">
+                  <svg class="corner tl" viewBox="0 0 130 130" fill="none"><path d="M2 90C2 40 40 2 90 2" stroke="url(#g1)" stroke-width="2.5"/><path d="M2 70C2 32 32 2 70 2" stroke="url(#g1)" stroke-width="1.5" opacity="0.6"/><defs><linearGradient id="g1" x1="2" y1="2" x2="90" y2="90"><stop stop-color="#d4af6a"/><stop offset="1" stop-color="#7a5c1e" stop-opacity="0"/></linearGradient></defs></svg>
+                  <svg class="corner tr" viewBox="0 0 130 130" fill="none"><path d="M2 90C2 40 40 2 90 2" stroke="url(#g2)" stroke-width="2.5"/><path d="M2 70C2 32 32 2 70 2" stroke="url(#g2)" stroke-width="1.5" opacity="0.6"/><defs><linearGradient id="g2" x1="2" y1="2" x2="90" y2="90"><stop stop-color="#d4af6a"/><stop offset="1" stop-color="#7a5c1e" stop-opacity="0"/></linearGradient></defs></svg>
+                  <div class="brand">
+                    <img src="${medaadLogo.src}" alt="مداد" class="brand-logo"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                    <span class="brand-name" style="display:none;">مداد</span>
+                  </div>
+                  <h1>تقرير حسابات مدرس</h1>
+                  <p class="academy"><span class="deco">✦</span>${data.teacherName}<span class="deco">✦</span></p>
+                  <span class="date-chip">📅 الفترة من ${dateRange.startDate} إلى ${dateRange.endDate}</span>
+                </div>
+
+                <!-- ── DASHBOARD: plain block, renders once right under the
+                     header, before the (possibly multi-page) data table ── -->
+                <div class="cards">
+                  <div class="card">
+                    <div class="icn">👛</div>
+                    <div class="label">صافي المستحق للمدرس</div>
+                    <div class="value gold">${fmt(netProfit)} ج.م</div>
+                  </div>
+                  <div class="card">
+                    <div class="icn">%</div>
+                    <div class="label">عمولة منصة مداد (${percentageDisplay}%)</div>
+                    <div class="value red">${fmt(platformShare)} ج.م</div>
+                  </div>
+                  <div class="card">
+                    <div class="icn">🛒</div>
+                    <div class="label">إجمالي المبيعات (الفعلية)</div>
+                    <div class="value green">${fmt(totalActual)} ج.م</div>
+                  </div>
+                  <div class="card">
+                    <div class="icn">📋</div>
+                    <div class="label">إجمالي الطلبات</div>
+                    <div class="subline">
+                      <span class="ok">✔ ${approvedCount} مقبول</span>
+                      <span class="no">✘ ${rejectedCount} مرفوض</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="two-col">
+                  <div class="panel">
+                    <h3>ملخص الفترة</h3>
+                    <div class="bar-row">
+                      <div class="bar-head"><span>💼 إجمالي المبيعات</span><span>${fmt(totalActual)} ج.م</span></div>
+                      <div class="bar-track"><div class="bar-fill gold" style="width:100%"></div></div>
+                    </div>
+                    <div class="bar-row">
+                      <div class="bar-head"><span>✅ الطلبات المقبولة</span><span>${approvedCount} طلب</span></div>
+                      <div class="bar-track"><div class="bar-fill green" style="width:${approvedPct}%"></div></div>
+                    </div>
+                    <div class="bar-row">
+                      <div class="bar-head"><span>❌ الطلبات المرفوضة</span><span>${rejectedCount} طلب</span></div>
+                      <div class="bar-track"><div class="bar-fill red" style="width:${rejectedPct}%"></div></div>
+                    </div>
+                  </div>
+
+                  <div class="panel">
+                    <h3>توزيع الطلبات</h3>
+                    <div class="donut-wrap">
+                      <svg width="150" height="150" viewBox="0 0 150 150">
+                        <circle cx="75" cy="75" r="${R}" fill="none" stroke="#dc2626" stroke-width="22"/>
+                        <circle cx="75" cy="75" r="${R}" fill="none" stroke="#16a34a" stroke-width="22"
+                          stroke-dasharray="${approvedDash} ${C}" stroke-dashoffset="0" transform="rotate(-90 75 75)"/>
+                        <circle cx="75" cy="75" r="38" fill="#fff" stroke="#f0ece0" stroke-width="1"/>
+                        <text x="75" y="80" text-anchor="middle" font-size="22">📋</text>
+                      </svg>
+                      <div>
+                        <div class="legend-item"><span class="dot" style="background:#16a34a"></span> مقبول ${approvedPct.toFixed(1)}% (${approvedCount})</div>
+                        <div class="legend-item"><span class="dot" style="background:#dc2626"></span> مرفوض ${rejectedPct.toFixed(1)}% (${rejectedCount})</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <table class="report-table">
                   <thead>
-                    <tr>
-                      <td colspan="7" class="banner-cell">
-                        <div class="banner">
-                          <svg class="corner tl" viewBox="0 0 130 130" fill="none"><path d="M2 90C2 40 40 2 90 2" stroke="url(#g1)" stroke-width="2.5"/><path d="M2 70C2 32 32 2 70 2" stroke="url(#g1)" stroke-width="1.5" opacity="0.6"/><defs><linearGradient id="g1" x1="2" y1="2" x2="90" y2="90"><stop stop-color="#d4af6a"/><stop offset="1" stop-color="#7a5c1e" stop-opacity="0"/></linearGradient></defs></svg>
-                          <svg class="corner tr" viewBox="0 0 130 130" fill="none"><path d="M2 90C2 40 40 2 90 2" stroke="url(#g2)" stroke-width="2.5"/><path d="M2 70C2 32 32 2 70 2" stroke="url(#g2)" stroke-width="1.5" opacity="0.6"/><defs><linearGradient id="g2" x1="2" y1="2" x2="90" y2="90"><stop stop-color="#d4af6a"/><stop offset="1" stop-color="#7a5c1e" stop-opacity="0"/></linearGradient></defs></svg>
-                          <div class="brand">
-                            <img src="${medaadLogo.src}" alt="مداد" class="brand-logo"
-                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
-                            <span class="brand-name" style="display:none;">مداد</span>
-                          </div>
-                          <h1>تقرير حسابات مدرس</h1>
-                          <p class="academy">${data.teacherName}</p>
-                          <span class="date-chip">📅 الفترة من ${dateRange.startDate} إلى ${dateRange.endDate}</span>
-                        </div>
-                      </td>
-                    </tr>
                     <tr class="col-head-row">
                       <th style="width:80px;">التاريخ</th>
                       <th>الطالب</th>
@@ -335,73 +399,6 @@ export default function SuperFinance() {
                       <th>ملاحظات</th>
                     </tr>
                   </thead>
-
-                  <tbody>
-                    <tr>
-                      <td colspan="7" class="dash-cell">
-                        <div class="cards">
-                          <div class="card">
-                            <div class="icn">👛</div>
-                            <div class="label">صافي المستحق للمدرس</div>
-                            <div class="value gold">${fmt(netProfit)} ج.م</div>
-                          </div>
-                          <div class="card">
-                            <div class="icn">%</div>
-                            <div class="label">عمولة منصة مداد (${percentageDisplay}%)</div>
-                            <div class="value red">${fmt(platformShare)} ج.م</div>
-                          </div>
-                          <div class="card">
-                            <div class="icn">🛒</div>
-                            <div class="label">إجمالي المبيعات (الفعلية)</div>
-                            <div class="value green">${fmt(totalActual)} ج.م</div>
-                          </div>
-                          <div class="card">
-                            <div class="icn">📋</div>
-                            <div class="label">إجمالي الطلبات</div>
-                            <div class="subline">
-                              <span class="ok">✔ ${approvedCount} مقبول</span>
-                              <span class="no">✘ ${rejectedCount} مرفوض</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div class="two-col">
-                          <div class="panel">
-                            <h3>ملخص الفترة</h3>
-                            <div class="bar-row">
-                              <div class="bar-head"><span>💼 إجمالي المبيعات</span><span>${fmt(totalActual)} ج.م</span></div>
-                              <div class="bar-track"><div class="bar-fill gold" style="width:100%"></div></div>
-                            </div>
-                            <div class="bar-row">
-                              <div class="bar-head"><span>✅ الطلبات المقبولة</span><span>${approvedCount} طلب</span></div>
-                              <div class="bar-track"><div class="bar-fill green" style="width:${approvedPct}%"></div></div>
-                            </div>
-                            <div class="bar-row">
-                              <div class="bar-head"><span>❌ الطلبات المرفوضة</span><span>${rejectedCount} طلب</span></div>
-                              <div class="bar-track"><div class="bar-fill red" style="width:${rejectedPct}%"></div></div>
-                            </div>
-                          </div>
-
-                          <div class="panel">
-                            <h3>توزيع الطلبات</h3>
-                            <div class="donut-wrap">
-                              <svg width="150" height="150" viewBox="0 0 150 150">
-                                <circle cx="75" cy="75" r="${R}" fill="none" stroke="#dc2626" stroke-width="22"/>
-                                <circle cx="75" cy="75" r="${R}" fill="none" stroke="#16a34a" stroke-width="22"
-                                  stroke-dasharray="${approvedDash} ${C}" stroke-dashoffset="0" transform="rotate(-90 75 75)"/>
-                                <circle cx="75" cy="75" r="38" fill="#fff" stroke="#f0ece0" stroke-width="1"/>
-                                <text x="75" y="80" text-anchor="middle" font-size="22">📋</text>
-                              </svg>
-                              <div>
-                                <div class="legend-item"><span class="dot" style="background:#16a34a"></span> مقبول ${approvedPct.toFixed(1)}% (${approvedCount})</div>
-                                <div class="legend-item"><span class="dot" style="background:#dc2626"></span> مرفوض ${rejectedPct.toFixed(1)}% (${rejectedCount})</div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
 
                   <tbody class="data-body">
                     ${data.requests.map(req => {
@@ -434,34 +431,30 @@ export default function SuperFinance() {
                       `;
                     }).join('')}
                   </tbody>
-
-                  <tfoot>
-                    <tr>
-                      <td colspan="7" class="footer-cell">
-                        <div class="footer-bar">
-                          <div>
-                            <div class="f-label">🏅 أعلى كورس مبيعاً</div>
-                            <div class="f-value">${bestCourseName}</div>
-                            <div class="f-label">${bestCourseCount} طلبات</div>
-                          </div>
-                          <div>
-                            <div class="f-label">💳 متوسط قيمة الطلب</div>
-                            <div class="f-value">${fmt(avgOrderValue)} ج.م</div>
-                          </div>
-                          <div>
-                            <div class="f-label">📅 تاريخ إنشاء التقرير</div>
-                            <div class="f-value">${new Date().toLocaleDateString('ar-EG', { day:'2-digit', month:'long', year:'numeric' })}</div>
-                            <div class="f-label">${new Date().toLocaleTimeString('ar-EG', { hour:'2-digit', minute:'2-digit' })}</div>
-                          </div>
-                          <div class="thanks">
-                            🪶 شكراً لثقتك في مداد
-                            <small>نسعى دائماً لنجاحك</small>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  </tfoot>
                 </table>
+
+                <!-- ── FOOTER: plain block after the table, so it only ever
+                     falls once, naturally at the end of the last page ── -->
+                <div class="footer-bar">
+                  <div>
+                    <div class="f-label">🏅 أعلى كورس مبيعاً</div>
+                    <div class="f-value">${bestCourseName}</div>
+                    <div class="f-label">${bestCourseCount} طلبات</div>
+                  </div>
+                  <div>
+                    <div class="f-label">💳 متوسط قيمة الطلب</div>
+                    <div class="f-value">${fmt(avgOrderValue)} ج.م</div>
+                  </div>
+                  <div>
+                    <div class="f-label">📅 تاريخ إنشاء التقرير</div>
+                    <div class="f-value">${new Date().toLocaleDateString('ar-EG', { day:'2-digit', month:'long', year:'numeric' })}</div>
+                    <div class="f-label">${new Date().toLocaleTimeString('ar-EG', { hour:'2-digit', minute:'2-digit' })}</div>
+                  </div>
+                  <div class="thanks">
+                    🪶 شكراً لثقتك في مداد
+                    <small>نسعى دائماً لنجاحك</small>
+                  </div>
+                </div>
               </div>
               <script>
                 window.onload = function() { window.print(); }
