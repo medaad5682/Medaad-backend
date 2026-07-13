@@ -261,13 +261,12 @@ export default function SuperFinance() {
                 .dot { width:11px; height:11px; border-radius:50%; -webkit-print-color-adjust:exact; }
 
                 /* ── TABLE ── */
-                .table-wrap { border: 1px solid #ece5d2; border-radius: 14px; overflow: hidden; }
+                .table-wrap { border: 1px solid #d9cfa8; border-radius: 10px; overflow: hidden; }
                 table { width:100%; border-collapse: collapse; font-size: 12px; }
-                th, td { border: none; border-bottom: 1px solid #eee7d4; padding: 12px 10px; text-align:right; vertical-align: middle; }
-                tbody tr:last-child td { border-bottom: none; }
-                th { background:#fbf6e8; color: var(--gold); font-weight:800; font-size:11px; -webkit-print-color-adjust:exact; }
+                th, td { border: 1px solid #e5decb; padding: 10px 8px; text-align:right; vertical-align: middle; }
+                th { background:#fbf6e8; color: var(--gold); font-weight:800; font-size:11.5px; -webkit-print-color-adjust:exact; }
                 tr.approved td { background: #f8fdf9; -webkit-print-color-adjust:exact; }
-                tr.rejected td { background: #fef7f7; -webkit-print-color-adjust:exact; }
+                tr.rejected td { background: #fef2f2; -webkit-print-color-adjust:exact; }
                 .status-pill { display:inline-flex; align-items:center; gap:4px; padding:4px 12px; border-radius:20px; font-weight:800; font-size:11px; -webkit-print-color-adjust:exact; }
                 .status-pill.approved { background:#dcf6e3; color:#15803d; }
                 .status-pill.rejected { background:#fbdede; color:#b91c1c; }
@@ -295,8 +294,9 @@ export default function SuperFinance() {
 
                 @media print {
                   body{ padding:0; } .sheet{ max-width:100%; }
-                  .content-area { padding-bottom: 150px; }
-                  .footer-bar { position: fixed; bottom: 0; left: 24px; right: 24px; margin-top: 0; }
+                  .banner { position: fixed; top: 0; left: 24px; right: 24px; margin-bottom: 0; z-index: 10; }
+                  .content-area { padding-top: 250px; padding-bottom: 150px; }
+                  .footer-bar { position: fixed; bottom: 0; left: 24px; right: 24px; margin-top: 0; z-index: 10; }
                 }
               </style>
             </head>
