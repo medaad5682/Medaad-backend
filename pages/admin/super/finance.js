@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import SuperLayout from '../../../components/SuperLayout';
-import medaadLogo from '../../../styles/medaad-logo.png';
 
 // ─── SVG Icons ──────────────────────────────────────────
 const WalletIcon = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path><path d="M4 6v12c0 1.1.9 2 2 2h14v-4"></path><path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z"></path></svg>);
@@ -138,7 +137,7 @@ export default function SuperFinance() {
     printWindow.document.close();
   };
 
-  // ✅ دالة طباعة تقرير المدرس التفصيلي (تصميم فاخر أسود/ذهبي)
+  // ✅ دالة طباعة تقرير المدرس التفصيلي
   const handleTeacherReport = async (teacherId) => {
     setReportLoading(teacherId);
     try {
@@ -161,61 +160,6 @@ export default function SuperFinance() {
         const platformShare = totalActual * percentage; 
         const netProfit = totalActual - platformShare;
 
-        const approvedCount = data.summary.total_approved_count || 0;
-        const rejectedCount = data.summary.total_rejected_count || 0;
-        const totalRequestsCount = approvedCount + rejectedCount;
-
-        const acceptedPct = totalRequestsCount > 0 ? (approvedCount / totalRequestsCount) * 100 : 0;
-        const rejectedPct = totalRequestsCount > 0 ? (rejectedCount / totalRequestsCount) * 100 : 0;
-
-        const avgRequestValue = approvedCount > 0 ? Math.round(totalActual / approvedCount) : 0;
-
-        // ── استخراج عناصر كل طلب (مواد/كورسات) من requested_data الهيكلية
-        //    مع رجوع احتياطي لتقسيم النص القديم course_title إن لم توجد بيانات هيكلية
-        const getItems = (req) => {
-          if (Array.isArray(req.requested_data) && req.requested_data.length) {
-            return req.requested_data.map(it => ({ title: it.title || 'بدون عنوان' }));
-          }
-          return (req.course_title || '')
-            .split(/\n──────────────────────\n|\n/)
-            .map(t => t.replace(/^[\u{1F300}-\u{1FAFF}\u2600-\u27BF]\s*/gu, '').replace(/^(كورس شامل|مادة|عنصر):\s*/, '').trim())
-            .filter(Boolean)
-            .map(title => ({ title }));
-        };
-
-        // ── حساب أعلى عنصر مبيعاً (من الطلبات المقبولة فقط)
-        const itemCounts = {};
-        data.requests.filter(r => r.status === 'approved').forEach(r => {
-          getItems(r).forEach(it => {
-            itemCounts[it.title] = (itemCounts[it.title] || 0) + 1;
-          });
-        });
-        let topCourseName = '—', topCourseCount = 0;
-        Object.entries(itemCounts).forEach(([title, count]) => {
-          if (count > topCourseCount) { topCourseName = title; topCourseCount = count; }
-        });
-
-        // ── تنسيق التاريخ بصيغة DD-MM-YYYY
-        const formatDMY = (iso) => {
-          if (!iso) return '';
-          const [y, m, d] = iso.split('-');
-          return `${d}-${m}-${y}`;
-        };
-
-        const reportCreatedDate = new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' });
-        const reportCreatedTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', hour12: true });
-
-        // ── أيقونات دورية بسيطة لعناصر الجدول (شكل بصري فقط، ثلاث ألوان متناوبة)
-        const itemIconPalette = [
-          { color: '#3b82f6', svg: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>' },
-          { color: '#16a34a', svg: '<path d="M9 2v6.5L4 20a1 1 0 0 0 1 1.5h14a1 1 0 0 0 1-1.5L15 8.5V2"></path><path d="M9 2h6"></path><path d="M8.5 13h7"></path>' },
-          { color: '#dc2626', svg: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"></path>' },
-        ];
-        const renderItemIcon = (i) => {
-          const ic = itemIconPalette[i % itemIconPalette.length];
-          return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${ic.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ic.svg}</svg>`;
-        };
-
         const safeName = data.teacherName.replace(/\s+/g, '_');
         const fileName = `تقرير_${safeName}_${dateRange.startDate}_${dateRange.endDate}`;
 
@@ -223,215 +167,88 @@ export default function SuperFinance() {
         const htmlContent = `
           <html dir="rtl">
             <head>
-              <meta charset="utf-8" />
-              <title>${fileName}</title>
+              <title>${fileName}</title> 
               <style>
-                :root {
-                  --gold: #c9a84c;
-                  --gold-light: #e6cd85;
-                  --dark: #15130f;
-                  --dark2: #1c1912;
-                  --green: #22c55e;
-                  --red: #ef4444;
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; color: #1a1508; }
+                .header-container { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #e5daba; padding-bottom: 20px; }
+                .logo { max-height: 80px; margin-bottom: 10px; }
+                h2 { text-align: center; color: #333; margin-bottom: 5px; margin-top: 0; }
+                p.meta { text-align: center; color: #666; margin-top: 0; font-weight: bold; }
+                
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; }
+                th, td { border: 1px solid #ccc; padding: 10px; text-align: right; vertical-align: middle; }
+                th { background-color: #fbf8f1; color: #b8903a; font-weight: bold; -webkit-print-color-adjust: exact; }
+                
+                .approved { background-color: #f0fdf4 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } 
+                .rejected { background-color: #fef2f2 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                
+                .summary { 
+                    margin: 20px 0; 
+                    padding: 20px; 
+                    border: 1px solid #e5daba; 
+                    background-color: #faf8f0;
+                    display: flex;
+                    justify-content: space-between;
+                    -webkit-print-color-adjust: exact;
+                    border-radius: 8px;
                 }
-                * { box-sizing: border-box; }
-                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 24px; color: #1a1508; background: #f4f1e8; }
-
-                /* ── Header banner ── */
-                .trep-header {
-                  background: linear-gradient(160deg, #0d0c09 0%, #1c1912 55%, #0d0c09 100%);
-                  border: 2px solid var(--gold);
-                  border-radius: 20px;
-                  padding: 30px 20px 24px;
-                  text-align: center;
-                  position: relative;
-                  overflow: hidden;
-                  -webkit-print-color-adjust: exact; print-color-adjust: exact;
-                }
-                .trep-header::before, .trep-header::after {
-                  content: '';
-                  position: absolute; top: 10px; width: 60px; height: 60px;
-                  border-top: 3px solid var(--gold); border-radius: 20px 0 0 0;
-                }
-                .trep-header::before { left: 10px; border-right: none; }
-                .trep-header::after { right: 10px; border-left: 3px solid var(--gold); border-top-right-radius: 20px; border-top-left-radius: 0; transform: scaleX(-1); }
-                .trep-logo { max-height: 70px; margin-bottom: 8px; }
-                .trep-title { color: #fff; font-size: 26px; font-weight: 800; margin: 6px 0 4px; }
-                .trep-subtitle { color: var(--gold-light); font-size: 15px; font-weight: 700; margin: 0 0 16px; letter-spacing: 0.5px; }
-                .trep-subtitle .dot { color: var(--gold); margin: 0 8px; }
-                .trep-daterange {
-                  display: inline-flex; align-items: center; gap: 8px;
-                  background: rgba(255,255,255,0.06); border: 1px solid rgba(201,168,76,0.4);
-                  color: #f0e9d2; padding: 8px 18px; border-radius: 30px; font-size: 13px; font-weight: 700;
-                }
-
-                /* ── Stat cards ── */
-                .trep-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 22px 0; }
-                .trep-card {
-                  background: #fff; border: 1px solid #e5daba; border-radius: 16px;
-                  padding: 18px 10px; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact;
-                }
-                .trep-card .icn {
-                  width: 44px; height: 44px; border-radius: 50%; margin: 0 auto 10px;
-                  display: flex; align-items: center; justify-content: center;
-                  background: #b8903a; color: #fff;
-                }
-                .trep-card .lbl { font-size: 12.5px; color: #6b6248; font-weight: 700; margin-bottom: 6px; }
-                .trep-card .val { font-size: 20px; font-weight: 800; color: #1a1508; }
-                .trep-card .val.gold { color: #b8903a; }
-                .trep-card .val.red { color: var(--red); }
-                .trep-card .sub-icn { margin-top: 8px; color: #b8903a; }
-                .trep-reqline { display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: 800; font-size: 14px; margin: 3px 0; }
-                .trep-reqline.ok { color: #16a34a; }
-                .trep-reqline.bad { color: var(--red); }
-
-                /* ── Summary + Donut ── */
-                .trep-grid2 { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; margin-bottom: 22px; }
-                .trep-panel { background: #fff; border: 1px solid #e5daba; border-radius: 16px; padding: 20px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-                .trep-panel h4 { margin: 0 0 16px; text-align: center; color: #b8903a; font-size: 15px; border-bottom: 2px solid #f0e9d2; padding-bottom: 10px; }
-                .trep-bar-row { margin-bottom: 16px; }
-                .trep-bar-row:last-child { margin-bottom: 0; }
-                .trep-bar-top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; color: #333; margin-bottom: 6px; }
-                .trep-bar-track { height: 8px; background: #f0ece0; border-radius: 6px; overflow: hidden; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-                .trep-bar-fill { height: 100%; border-radius: 6px; }
-                .trep-bar-pct { text-align: left; font-size: 11px; color: #888; margin-top: 3px; }
-
-                .trep-donut-wrap { display: flex; align-items: center; justify-content: center; gap: 18px; }
-                .trep-donut {
-                  width: 110px; height: 110px; border-radius: 50%; position: relative;
-                  background: conic-gradient(var(--green) 0% ${acceptedPct}%, var(--red) ${acceptedPct}% 100%);
-                  -webkit-print-color-adjust: exact; print-color-adjust: exact;
-                }
-                .trep-donut::after {
-                  content: ''; position: absolute; inset: 22px; background: #fff; border-radius: 50%;
-                }
-                .trep-donut-center { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #b8903a; }
-                .trep-legend { font-size: 12.5px; font-weight: 700; }
-                .trep-legend-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-                .trep-legend-dot { width: 10px; height: 10px; border-radius: 50%; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-
-                /* ── Table ── */
-                table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12px; background: #fff; }
-                th, td { border: 1px solid #e5daba; padding: 10px; text-align: right; vertical-align: middle; }
-                th { background-color: #15130f; color: var(--gold-light); font-weight: bold; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-                .trep-table-wrap { border-radius: 16px; overflow: hidden; border: 1px solid #e5daba; }
-
-                .status-pill { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 20px; font-weight: 800; font-size: 11.5px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-                .status-pill.ok { background: #ecfdf3; color: #16a34a; }
-                .status-pill.bad { background: #fef2f2; color: var(--red); }
-
-                .item-line { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; }
-                .item-line:last-child { margin-bottom: 0; }
-
-                .user-info { font-weight: bold; display: flex; align-items: center; gap: 6px; }
-                .username { font-size: 0.85em; color: #777; display: block; font-weight: 400; }
-                .user-avatar { width: 20px; height: 20px; border-radius: 50%; background: #f0e9d2; display: flex; align-items: center; justify-content: center; color: #b8903a; flex-shrink: 0; }
-
-                .note-bad { color: var(--red); font-weight: 700; font-size: 11px; }
-                .price-strike { text-decoration: line-through; color: #999; }
-                .price-paid { font-weight: bold; color: #16a34a; }
-
-                /* ── Footer ── */
-                .trep-footer {
-                  margin-top: 22px; background: linear-gradient(160deg, #0d0c09 0%, #1c1912 100%);
-                  border: 1px solid var(--gold); border-radius: 16px; padding: 18px;
-                  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center;
-                  -webkit-print-color-adjust: exact; print-color-adjust: exact;
-                }
-                .trep-footer .f-item { color: #eee; }
-                .trep-footer .f-icn { color: var(--gold); margin-bottom: 6px; display: flex; justify-content: center; }
-                .trep-footer .f-lbl { font-size: 11px; color: #b7b09a; font-weight: 700; margin-bottom: 4px; }
-                .trep-footer .f-val { font-size: 13px; font-weight: 800; color: #fff; }
-                .trep-footer .f-sub { font-size: 10.5px; color: #999; margin-top: 2px; }
-
-                @media print {
-                  body { background: #fff; padding: 0; }
-                }
+                .summary-col { flex: 1; text-align: center; }
+                .summary-col.border { border-left: 1px solid #e5daba; } 
+                
+                .val { font-weight: bold; font-size: 1.1em; display: block; margin-top: 5px; }
+                .val.muted { color: #888; font-size: 0.9em; text-decoration: line-through; }
+                .green { color: #16a34a; }
+                .gold { color: #b8903a; }
+                .red { color: #dc2626; }
+                
+                .info-row { margin-bottom: 5px; font-size: 14px; font-weight: bold; color: #444; }
+                
+                .user-info { font-weight: bold; }
+                .username { font-size: 0.85em; color: #777; display: block; }
               </style>
             </head>
             <body>
-
-              <div class="trep-header">
-                 <img src="${medaadLogo?.src || '/medaad-logo.png'}" alt="مداد" class="trep-logo" onerror="this.style.display='none'" />
-                 <div class="trep-title">تقرير حسابات مدرس</div>
-                 <div class="trep-subtitle"><span class="dot">✦</span>${data.teacherName}<span class="dot">✦</span></div>
-                 <div class="trep-daterange">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                    الفترة من ${formatDMY(dateRange.startDate)} إلى ${formatDMY(dateRange.endDate)}
-                 </div>
+              <div class="header-container">
+                 <img src="/logo.png" alt="Logo" class="logo" onerror="this.style.display='none'" />
+                 <h2>تقرير حسابات مدرس</h2>
+                 <h3 style="margin:5px 0; color:#b8903a; font-size: 24px;">${data.teacherName}</h3>
+                 <p class="meta">الفترة من ${dateRange.startDate} إلى ${dateRange.endDate}</p>
               </div>
 
-              <div class="trep-cards">
-                <div class="trep-card">
-                  <div class="icn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path><path d="M4 6v12c0 1.1.9 2 2 2h14v-4"></path><path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z"></path></svg></div>
-                  <div class="lbl">صافي المستحق للمدرس</div>
-                  <div class="val">${netProfit.toLocaleString()} ج.م</div>
+              <div class="summary">
+                <div class="summary-col border">
+                    <div class="info-row">مقبول / مرفوض</div>
+                    <span class="val green">${data.summary.total_approved_count} مقبول</span>
+                    <span class="val red">${data.summary.total_rejected_count} مرفوض</span>
                 </div>
-                <div class="trep-card">
-                  <div class="icn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"></line><circle cx="6.5" cy="6.5" r="2.5"></circle><circle cx="17.5" cy="17.5" r="2.5"></circle></svg></div>
-                  <div class="lbl">عمولة منصة مداد (${percentageDisplay}%)</div>
-                  <div class="val red">${platformShare.toLocaleString()} ج.م</div>
+                
+                <div class="summary-col border">
+                    <div class="info-row">إجمالي المبيعات (الفعلي)</div>
+                    <span class="val muted">${totalOriginal.toLocaleString()} ج.م (افتراضي)</span>
+                    <span class="val green">${totalActual.toLocaleString()} ج.م</span>
                 </div>
-                <div class="trep-card">
-                  <div class="icn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg></div>
-                  <div class="lbl">إجمالي المبيعات (الفعلية)</div>
-                  <div class="val gold">${totalActual.toLocaleString()} ج.م</div>
+
+                <div class="summary-col border">
+                    <div class="info-row">حصة المنصة (${percentageDisplay}%)</div>
+                    <span class="val red">${platformShare.toLocaleString()} ج.م</span>
                 </div>
-                <div class="trep-card">
-                  <div class="icn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg></div>
-                  <div class="lbl">إجمالي الطلبات</div>
-                  <div class="trep-reqline ok">${approvedCount} مقبول</div>
-                  <div class="trep-reqline bad">${rejectedCount} مرفوض</div>
+
+                <div class="summary-col">
+                    <div class="info-row">صافي المستحق للمدرس</div>
+                    <span class="val gold" style="font-size:1.4em">${netProfit.toLocaleString()} ج.م</span>
                 </div>
               </div>
 
-              <div class="trep-grid2">
-                <div class="trep-panel">
-                  <h4>ملخص الفترة</h4>
-                  <div class="trep-bar-row">
-                    <div class="trep-bar-top"><span>إجمالي المبيعات</span><span>${totalActual.toLocaleString()} ج.م</span></div>
-                    <div class="trep-bar-track"><div class="trep-bar-fill" style="width:100%; background:var(--green);"></div></div>
-                    <div class="trep-bar-pct">100%</div>
-                  </div>
-                  <div class="trep-bar-row">
-                    <div class="trep-bar-top"><span>الطلبات المقبولة</span><span>${approvedCount} طلب</span></div>
-                    <div class="trep-bar-track"><div class="trep-bar-fill" style="width:${acceptedPct}%; background:var(--green);"></div></div>
-                    <div class="trep-bar-pct">${acceptedPct.toFixed(1)}%</div>
-                  </div>
-                  <div class="trep-bar-row">
-                    <div class="trep-bar-top"><span>الطلبات المرفوضة</span><span>${rejectedCount} طلب</span></div>
-                    <div class="trep-bar-track"><div class="trep-bar-fill" style="width:${rejectedPct}%; background:var(--red);"></div></div>
-                    <div class="trep-bar-pct">${rejectedPct.toFixed(1)}%</div>
-                  </div>
-                </div>
-
-                <div class="trep-panel">
-                  <h4>توزيع الطلبات</h4>
-                  <div class="trep-donut-wrap">
-                    <div class="trep-donut">
-                      <div class="trep-donut-center">
-                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="4" rx="1"></rect><path d="M9 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-4"></path></svg>
-                      </div>
-                    </div>
-                    <div class="trep-legend">
-                      <div class="trep-legend-row"><span class="trep-legend-dot" style="background:var(--green)"></span>مقبول<br/>${acceptedPct.toFixed(1)}% (${approvedCount})</div>
-                      <div class="trep-legend-row"><span class="trep-legend-dot" style="background:var(--red)"></span>مرفوض<br/>${rejectedPct.toFixed(1)}% (${rejectedCount})</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="trep-table-wrap">
               <table>
                 <thead>
                   <tr>
                     <th style="width: 80px;">التاريخ</th>
                     <th>الطالب</th>
-                    <th>الكورس / المواد</th>
-                    <th>السعر الأصلي</th>
+                    <th>المحتوى</th>
+                    <th>السعر المطلوب</th>
                     <th>المدفوع فعلياً</th>
                     <th>الحالة</th>
-                    <th>ملاحظات</th>
+                    <th>ملاحظة الطالب</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -439,58 +256,27 @@ export default function SuperFinance() {
                      const orig = req.total_price || 0;
                      const act = req.actual_paid_price !== null ? req.actual_paid_price : orig;
                      const hasCustomPrice = req.actual_paid_price !== null;
-                     const isApproved = req.status === 'approved';
-                     const items = getItems(req);
 
                      return `
-                    <tr>
+                    <tr class="${req.status}">
                       <td>${new Date(req.created_at).toLocaleDateString('ar-EG')}</td>
                       <td>
-                        <span class="user-info">
-                          <span class="user-avatar"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg></span>
-                          ${req.user_name || 'بدون اسم'}
-                        </span>
+                        <span class="user-info">${req.user_name || 'بدون اسم'}</span>
                         <span class="username">${req.user_username ? `(${req.user_username})` : ''}</span>
                       </td>
-                      <td>${items.map((it, idx) => `<div class="item-line">${renderItemIcon(idx)}<span>${it.title}</span></div>`).join('')}</td>
-                      <td style="${hasCustomPrice ? 'text-decoration:line-through;color:#888;' : ''}">${orig.toLocaleString()} ج.م</td>
-                      <td class="price-paid">${act.toLocaleString()} ج.م</td>
-                      <td>
-                        ${isApproved
-                          ? `<span class="status-pill ok"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> مقبول</span>`
-                          : `<span class="status-pill bad"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> مرفوض</span>`}
-                      </td>
-                      <td>${!isApproved && req.rejection_reason ? `<span class="note-bad">${req.rejection_reason}</span>` : (req.user_note || '—')}</td>
+                      <td>${req.course_title}</td>
+                      <td style="${hasCustomPrice ? 'text-decoration:line-through;color:#888;' : ''}">${orig}</td>
+                      <td style="font-weight:bold; color:#16a34a;">${act}</td>
+                      <td>${req.status === 'approved' ? '✅ مقبول' : '❌ مرفوض'}</td>
+                      <td>${req.user_note || '-'}</td>
                     </tr>
                     `;
                   }).join('')}
                 </tbody>
               </table>
-              </div>
-
-              <div class="trep-footer">
-                <div class="f-item">
-                  <div class="f-icn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"></circle><path d="M8.21 13.89L7 23l5-3 5 3-1.21-9.12"></path></svg></div>
-                  <div class="f-lbl">أعلى كورس مبيعاً</div>
-                  <div class="f-val">${topCourseName}</div>
-                  <div class="f-sub">${topCourseCount} طلبات</div>
-                </div>
-                <div class="f-item">
-                  <div class="f-icn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg></div>
-                  <div class="f-lbl">متوسط قيمة الطلب</div>
-                  <div class="f-val">${avgRequestValue.toLocaleString()} ج.م</div>
-                </div>
-                <div class="f-item">
-                  <div class="f-icn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></div>
-                  <div class="f-lbl">تاريخ إنشاء التقرير</div>
-                  <div class="f-val">${reportCreatedDate}</div>
-                  <div class="f-sub">${reportCreatedTime}</div>
-                </div>
-                <div class="f-item">
-                  <div class="f-icn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"></path><line x1="16" y1="8" x2="2" y2="22"></line><line x1="17.5" y1="15" x2="9" y2="15"></line></svg></div>
-                  <div class="f-lbl">شكراً لثقتك في مداد</div>
-                  <div class="f-val" style="font-size:11px;">نسعى دائماً لنجاحك</div>
-                </div>
+              
+              <div style="margin-top: 30px; text-align: center; font-size: 12px; color: #777;">
+                تم استخراج هذا التقرير بتاريخ: ${new Date().toLocaleDateString('ar-EG')}
               </div>
 
               <script>
