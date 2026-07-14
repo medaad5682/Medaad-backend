@@ -72,18 +72,29 @@ export default async function handler(req, res) {
                       requires_student_name: oldExam.requires_student_name,
                       randomize_questions: oldExam.randomize_questions,
                       randomize_options: oldExam.randomize_options,
+                      allow_retake: oldExam.allow_retake,
                       is_active: oldExam.is_active,
-                      sort_order: oldExam.sort_order
+                      sort_order: oldExam.sort_order,
+                      // ⚠️ لا يتم نسخ علَم الإشعار عمداً حتى لا يعيد الكرون إشعار الطلاب بامتحان جديد بالخطأ
+                      notify_students: false
                   }).select().single();
 
                   const { data: oldQuestions } = await supabase.from('questions').select('*, options(*)').eq('exam_id', oldExam.id);
                   for (const oldQ of (oldQuestions || [])) {
+                      const questionType = oldQ.question_type === 'essay' ? 'essay' : 'mcq';
+
                       const { data: newQ } = await supabase.from('questions').insert({
-                          exam_id: newExam.id, question_text: oldQ.question_text,
-                          image_file_id: oldQ.image_file_id, sort_order: oldQ.sort_order
+                          exam_id: newExam.id,
+                          question_text: oldQ.question_text,
+                          image_file_id: oldQ.image_file_id,
+                          sort_order: oldQ.sort_order,
+                          question_type: questionType,
+                          max_score: questionType === 'essay' ? (oldQ.max_score || 1) : 1,
+                          model_answer: questionType === 'essay' ? (oldQ.model_answer || null) : null
                       }).select().single();
 
-                      if (oldQ.options && oldQ.options.length > 0) {
+                      // ✅ الخيارات تُنسخ فقط للأسئلة الاختيارية - الأسئلة المقالية لا تحتاج جدول options
+                      if (questionType === 'mcq' && oldQ.options && oldQ.options.length > 0) {
                           const newOptions = oldQ.options.map(opt => ({
                               question_id: newQ.id, option_text: opt.option_text,
                               is_correct: opt.is_correct, sort_order: opt.sort_order
@@ -209,13 +220,38 @@ export default async function handler(req, res) {
               const examsToCopy = oldSub.exams.filter(ex => selected.exams.includes(ex.id));
               for (const oldExam of examsToCopy) {
                   const { data: newExam } = await supabase.from('exams').insert({
-                      subject_id: newSub.id, teacher_id: teacherId, title: oldExam.title, duration_minutes: oldExam.duration_minutes, start_time: oldExam.start_time, end_time: oldExam.end_time, requires_student_name: oldExam.requires_student_name, randomize_questions: oldExam.randomize_questions, randomize_options: oldExam.randomize_options, is_active: oldExam.is_active, sort_order: oldExam.sort_order
+                      subject_id: newSub.id,
+                      teacher_id: teacherId,
+                      title: oldExam.title,
+                      duration_minutes: oldExam.duration_minutes,
+                      start_time: oldExam.start_time,
+                      end_time: oldExam.end_time,
+                      requires_student_name: oldExam.requires_student_name,
+                      randomize_questions: oldExam.randomize_questions,
+                      randomize_options: oldExam.randomize_options,
+                      allow_retake: oldExam.allow_retake,
+                      is_active: oldExam.is_active,
+                      sort_order: oldExam.sort_order,
+                      // ⚠️ لا يتم نسخ علَم الإشعار عمداً حتى لا يعيد الكرون إشعار الطلاب بامتحان جديد بالخطأ
+                      notify_students: false
                   }).select().single();
 
                   const { data: oldQuestions } = await supabase.from('questions').select('*, options(*)').eq('exam_id', oldExam.id);
                   for (const oldQ of (oldQuestions || [])) {
-                      const { data: newQ } = await supabase.from('questions').insert({ exam_id: newExam.id, question_text: oldQ.question_text, image_file_id: oldQ.image_file_id, sort_order: oldQ.sort_order }).select().single();
-                      if (oldQ.options && oldQ.options.length > 0) {
+                      const questionType = oldQ.question_type === 'essay' ? 'essay' : 'mcq';
+
+                      const { data: newQ } = await supabase.from('questions').insert({
+                          exam_id: newExam.id,
+                          question_text: oldQ.question_text,
+                          image_file_id: oldQ.image_file_id,
+                          sort_order: oldQ.sort_order,
+                          question_type: questionType,
+                          max_score: questionType === 'essay' ? (oldQ.max_score || 1) : 1,
+                          model_answer: questionType === 'essay' ? (oldQ.model_answer || null) : null
+                      }).select().single();
+
+                      // ✅ الخيارات تُنسخ فقط للأسئلة الاختيارية - الأسئلة المقالية لا تحتاج جدول options
+                      if (questionType === 'mcq' && oldQ.options && oldQ.options.length > 0) {
                           const newOptions = oldQ.options.map(opt => ({ question_id: newQ.id, option_text: opt.option_text, is_correct: opt.is_correct, sort_order: opt.sort_order }));
                           await supabase.from('options').insert(newOptions);
                       }
