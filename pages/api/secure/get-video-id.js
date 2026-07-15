@@ -199,6 +199,9 @@ export default async (req, res) => {
         const teacherId = course?.teacher_id || 'UNKNOWN_TEACHER';
         const teacherName = course?.teachers?.name || 'بدون مدرس';
 
+        // ✅ [جديد] ملخص بيانات الفيديو يُستخدم في اللوجات (خصوصاً عند غياب bunny_video_id أو فشل البروكسي)
+        const videoInfoLog = `[VideoID: ${lessonId} | Title: "${videoData.title || 'بدون عنوان'}" | YouTubeID: ${videoData.youtube_video_id || 'N/A'} | Chapter: "${chapterName}" | Subject: "${subjectName}" | Course: "${courseName}"]`;
+
         // ================================================================
         // ✅ [جديد] تسجيل المشاهدة في Firebase بصمت (Fire and Forget)
         // ================================================================
@@ -307,6 +310,11 @@ export default async (req, res) => {
             // ننتقل للسيرفرات الاحتياطية
             const bunnySucceeded = proxyResult.url || proxyResult.availableQualities.length > 0;
 
+            if (!videoData.bunny_video_id) {
+                // ⚠️ [جديد] لا يوجد bunny_video_id لهذا الفيديو بعد - نطبع تفاصيله كاملة للمتابعة
+                errLog(`⚠️ No bunny_video_id yet, falling back to YouTube proxy. ${videoInfoLog}`);
+            }
+
             if (!bunnySucceeded && PYTHON_PROXY_BASE_URL) {
                 const proxyHeaders = process.env.PYTHON_PROXY_KEY ? { 'X-API-Key': process.env.PYTHON_PROXY_KEY } : {};
                 const queryParams = { youtubeId: videoData.youtube_video_id };
@@ -323,18 +331,25 @@ export default async (req, res) => {
                     log("✅ First Backup Proxy Succeeded!");
 
                 } catch (primaryErr) {
-                    errLog(`⚠️ First Backup Proxy Failed: ${primaryErr.message}. Switching IMMEDIATELY to Second Backup...`);
+                    errLog(`⚠️ First Backup Proxy Failed: ${primaryErr.message}. Switching IMMEDIATELY to Second Backup... ${videoInfoLog}`);
 
                     // --- المحاولة الثالثة: السيرفر الاحتياطي الثاني ---
                     if (PYTHON_HLS_BACKUP_URL) {
-                        const backupResponse = await axios.get(`${PYTHON_HLS_BACKUP_URL}/api/get-hls-playlist`, {
-                            params: queryParams,
-                            headers: proxyHeaders
-                        });
+                        try {
+                            const backupResponse = await axios.get(`${PYTHON_HLS_BACKUP_URL}/api/get-hls-playlist`, {
+                                params: queryParams,
+                                headers: proxyHeaders
+                            });
 
-                        proxyResult = backupResponse.data;
-                        log("✅ Second Backup Proxy Succeeded!");
+                            proxyResult = backupResponse.data;
+                            log("✅ Second Backup Proxy Succeeded!");
+                        } catch (backupErr) {
+                            // ⚠️ [جديد] فشل حتى السيرفر الاحتياطي الثاني - نطبع تفاصيل الفيديو كاملة
+                            errLog(`⚠️ Second Backup Proxy Also Failed: ${backupErr.message}. ${videoInfoLog}`);
+                            throw backupErr;
+                        }
                     } else {
+                        errLog(`⚠️ No Second Backup URL configured. ${videoInfoLog}`);
                         throw primaryErr;
                     }
                 }
