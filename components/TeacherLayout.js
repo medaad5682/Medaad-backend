@@ -247,7 +247,7 @@ export default function TeacherLayout({ children, title }) {
 
         
 
-        body { /* ── THEME VARS (ألوان هادئة ومحايدة) ── */
+        /* ── THEME VARS (ألوان هادئة ومحايدة) ── */
         .layout-root.dark {
           --bg-base:        #121212;  /* خلفية داكنة محايدة بدلاً من المائلة للبني */
           --bg-surface:     #1a1a1a;
@@ -283,7 +283,8 @@ export default function TeacherLayout({ children, title }) {
           --shadow:         0 4px 24px rgba(0,0,0,0.06);
           --header-bg:      #ffffff;
         }
-        
+
+        body {
           margin: 0; 
           font-family: 'Segoe UI', Tahoma, Arial, sans-serif; 
           overflow-x: hidden; 

@@ -57,7 +57,7 @@ export default async (req, res) => {
         id, title, course_id,
         courses ( id, title, teacher_id ),
         chapters (
-          id, title, sort_order,
+          id, title, sort_order, folder_name,
           videos (id, title, sort_order, youtube_video_id, duration, encoding_status, bunny_video_id), 
           pdfs (id, title, sort_order)
         ),

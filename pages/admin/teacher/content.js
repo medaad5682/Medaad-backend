@@ -51,13 +51,27 @@ export default function ContentManager() {
     durMinutes: '',   
     durSeconds: ''    
   });
+  // ✅ [جديد] وضع اختيار المجلد داخل نافذة إضافة/تعديل الفصل:
+  // 'existing' = عرض قائمة اختيار من المجلدات الموجودة بالفعل في المادة،
+  // 'new' = عرض حقل نصي لكتابة اسم مجلد جديد.
+  const [folderMode, setFolderMode] = useState('existing');
   const [notifyPdf, setNotifyPdf] = useState(false); 
   const [alertData, setAlertData] = useState({ show: false, type: 'info', msg: '' });
   const [confirmData, setConfirmData] = useState({ show: false, msg: '', onConfirm: null });
   
-  // Drag & Drop State
+  // ✅ [جديد] مجموعات الفصول القابلة للطي حسب اسم المجلد (folder_name)
+  // مغلقة افتراضيًا: هنا بنتتبع أسماء المجلدات المفتوحة فقط، أي مجلد مش موجود في المجموعة يبقى مقفول.
+  const [openChapterFolders, setOpenChapterFolders] = useState(() => new Set());
+
+  // Drag & Drop State (courses / subjects / exams / videos / pdfs)
   const dragItem = useRef();
   const dragOverItem = useRef();
+
+  // ✅ [جديد] حالة السحب والإفلات الخاصة بالفصول — بتدعم مستويين:
+  // 'top'    = ترتيب على مستوى القائمة الرئيسية (فصل منفرد أو مجلد كامل ككتلة واحدة)
+  // 'folder' = ترتيب داخل مجلد مفتوح معين (بين الفصول اللي جوه نفس المجلد بس)
+  const chapterDragRef = useRef(null);
+  const chapterDragOverRef = useRef(null);
 
   // Exam Editor
   const [showExamSidebar, setShowExamSidebar] = useState(false);
@@ -192,45 +206,160 @@ export default function ContentManager() {
       setLoading(false);
   };
 
-  // --- Drag & Drop ---
+  // ✅ [جديد] تجميع الفصول حسب اسم المجلد (folder_name) مع الحفاظ على ترتيب الظهور.
+  // أي فصل بدون folder_name يظهر منفرد كما هو. أي فصول لها نفس اسم المجلد
+  // (حتى لو مش متتالية في الترتيب) بتتجمع تحت نفس عنوان المجلد القابل للطي.
+  const getChapterEntries = () => {
+      const chapters = selectedSubject?.chapters || [];
+      const entries = [];
+      const folderPosition = {};
+
+      chapters.forEach((ch, index) => {
+          const name = (ch.folder_name || '').trim();
+          if (!name) {
+              entries.push({ isFolder: false, chapter: ch, index });
+              return;
+          }
+          if (folderPosition[name] === undefined) {
+              folderPosition[name] = entries.length;
+              entries.push({ isFolder: true, folderName: name, items: [{ chapter: ch, index }] });
+          } else {
+              entries[folderPosition[name]].items.push({ chapter: ch, index });
+          }
+      });
+
+      return entries;
+  };
+
+  const toggleChapterFolder = (folderName) => {
+      setOpenChapterFolders(prev => {
+          const next = new Set(prev);
+          if (next.has(folderName)) next.delete(folderName);
+          else next.add(folderName);
+          return next;
+      });
+  };
+
+  // ✅ [جديد] عنصر الفصل (card) بستايلات inline صريحة بجانب الكلاسات —
+  // بالشكل ده الكارت بيظهر وبيشتغل صح حتى لو حصل أي تعارض/مشكلة في الـ CSS
+  // classes (زي اللي كان بيحصل جوه مجموعات المجلدات القابلة للطي).
+  // dragHandlers: { onDragStart, onDragEnter, onDragOver, onDragEnd } مربوطة مسبقًا
+  // حسب سياق العنصر (مستوى رئيسي أو داخل مجلد) من مكان الاستدعاء.
+  const renderChapterItem = (ch, dragHandlers, compact = false) => (
+      <div
+        key={ch.id}
+        className={`list-item clickable draggable-item${compact ? ' chapter-item-compact' : ''}`}
+        onClick={() => setSelectedChapter(ch)}
+        draggable
+        onDragStart={dragHandlers.onDragStart}
+        onDragEnter={dragHandlers.onDragEnter}
+        onDragOver={dragHandlers.onDragOver}
+        onDragEnd={dragHandlers.onDragEnd}
+        style={{
+            background: 'var(--bg-base)',
+            padding: compact ? '10px 12px' : '15px',
+            borderRadius: '10px',
+            border: '1px solid var(--border)',
+            display: 'flex',
+            flexWrap: 'nowrap',
+            alignItems: 'center',
+            gap: '12px',
+            justifyContent: 'space-between',
+            position: 'relative',
+            cursor: 'pointer'
+        }}
+      >
+          <div className="drag-handle" onClick={e => e.stopPropagation()} style={{flexShrink: 0, cursor: 'grab', color: 'var(--text-muted)'}}>{Icons.drag}</div>
+          <div className="info" style={{minWidth: 0, overflow: 'hidden', flex: 1}}>
+              <div style={{
+                  fontWeight: 'bold',
+                  color: 'var(--text-primary)',
+                  marginBottom: '4px',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+              }}>
+                  {ch.title}
+              </div>
+
+              <div className="chapter-counts" style={{color: 'var(--text-muted)', fontSize: '0.85em'}}>
+                  {ch.videos?.length || 0} فيديو • {ch.pdfs?.length || 0} ملف
+              </div>
+          </div>
+          <button
+            className="btn-icon danger"
+            onClick={(e) => {e.stopPropagation(); handleDelete('chapters', ch.id)}}
+            style={{
+                flexShrink: 0,
+                width: '34px',
+                height: '34px',
+                borderRadius: '8px',
+                border: '1px solid transparent',
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-secondary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer'
+            }}
+          >{Icons.trash}</button>
+      </div>
+  );
+
+  // --- Drag & Drop (courses / subjects / exams / videos / pdfs) ---
+  // ملحوظة: onDragStart لازم يعمل e.dataTransfer.setData + effectAllowed —
+  // من غيرهم بعض المتصفحات (فايرفوكس تحديدًا) بترفض تبدأ عملية السحب أصلاً
+  // أو بتوقفها في نص الطريق، وده كان سبب "مش قادر أسحب" اللي بيحصل.
+  // وonDragOver لازم يعمل preventDefault على كل عنصر عشان يفضل يتحسب "drop target"
+  // صالح باستمرار أثناء تحريك الماوس فوقه.
   const onDragStart = (e, index) => {
       dragItem.current = index;
-      e.target.closest('.draggable-item').classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', String(index)); } catch (_) {}
+      e.currentTarget.classList.add('dragging');
   };
 
   const onDragEnter = (e, index) => {
+      e.preventDefault();
       dragOverItem.current = index;
   };
 
-  const onDragEnd = async (e, listType) => { 
-      e.target.closest('.draggable-item').classList.remove('dragging');
-      
+  const onDragOver = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+  };
+
+  const onDragEnd = async (e, listType) => {
+      e.currentTarget.classList.remove('dragging');
+
+      const from = dragItem.current;
+      const to = dragOverItem.current;
+      dragItem.current = null;
+      dragOverItem.current = null;
+
+      if (from === undefined || to === undefined || from === to) return;
+
       let list = [];
       if (listType === 'courses') list = [...courses];
       else if (listType === 'subjects') list = [...selectedCourse.subjects];
-      else if (listType === 'chapters') list = [...selectedSubject.chapters];
       else if (listType === 'exams') list = [...selectedSubject.exams];
       else if (listType === 'videos') list = [...selectedChapter.videos];
       else if (listType === 'pdfs') list = [...selectedChapter.pdfs];
 
       if (!list.length) return;
 
-      const draggedItemContent = list[dragItem.current];
-      list.splice(dragItem.current, 1);
-      list.splice(dragOverItem.current, 0, draggedItemContent);
-
-      dragItem.current = null;
-      dragOverItem.current = null;
+      const draggedItemContent = list[from];
+      list.splice(from, 1);
+      list.splice(to, 0, draggedItemContent);
 
       if (listType === 'courses') setCourses(list);
       else if (listType === 'subjects') setSelectedCourse({ ...selectedCourse, subjects: list });
-      else if (listType === 'chapters') setSelectedSubject({ ...selectedSubject, chapters: list });
       else if (listType === 'exams') setSelectedSubject({ ...selectedSubject, exams: list });
       else if (listType === 'videos') setSelectedChapter({ ...selectedChapter, videos: list });
       else if (listType === 'pdfs') setSelectedChapter({ ...selectedChapter, pdfs: list });
 
       const updatedItems = list.map((item, index) => ({ id: item.id, sort_order: index }));
-      
+
       try {
           await fetch('/api/dashboard/teacher/reorder', {
               method: 'POST',
@@ -240,6 +369,91 @@ export default function ContentManager() {
       } catch (err) {
           showAlert('error', 'فشل حفظ الترتيب');
           refreshView();
+      }
+  };
+
+  // --- Drag & Drop (الفصول — مع دعم المجلدات) ---
+  // فكرة التنفيذ: بنشتغل على "الوحدات" الظاهرة على الشاشة (entries) اللي بيرجعها
+  // getChapterEntries()، مش على الـ index الخام جوه selectedSubject.chapters مباشرة،
+  // عشان السحب يبقى متوافق تمامًا مع الترتيب اللي الأستاذ شايفه فعليًا:
+  //   scope 'top'    → فصل منفرد أو مجلد كامل (بكل الفصول اللي جواه كوحدة واحدة)
+  //   scope 'folder' → فصل داخل مجلد مفتوح، بيتحرك بين فصول نفس المجلد بس
+  const onChapterDragStart = (e, scope, folderName, index) => {
+      chapterDragRef.current = { scope, folderName, index };
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', String(index)); } catch (_) {}
+      e.stopPropagation();
+      e.currentTarget.classList.add('dragging');
+  };
+
+  const onChapterDragEnter = (e, scope, folderName, index) => {
+      e.preventDefault();
+      e.stopPropagation();
+      chapterDragOverRef.current = { scope, folderName, index };
+  };
+
+  const onChapterDragOver = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+  };
+
+  // بيحول قائمة الوحدات (entries) بعد إعادة الترتيب إلى مصفوفة فصول مسطّحة
+  // ويحفظها في selectedSubject.chapters، وبعدين يبعت sort_order الجديد للسيرفر.
+  const commitChapterReorder = async (entries) => {
+      const flatChapters = [];
+      entries.forEach(en => {
+          if (en.isFolder) en.items.forEach(it => flatChapters.push(it.chapter));
+          else flatChapters.push(en.chapter);
+      });
+
+      setSelectedSubject(prev => ({ ...prev, chapters: flatChapters }));
+
+      const updatedItems = flatChapters.map((ch, index) => ({ id: ch.id, sort_order: index }));
+
+      try {
+          await fetch('/api/dashboard/teacher/reorder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'chapters', items: updatedItems })
+          });
+      } catch (err) {
+          showAlert('error', 'فشل حفظ الترتيب');
+          refreshView();
+      }
+  };
+
+  const onChapterDragEnd = (e) => {
+      e.currentTarget.classList.remove('dragging');
+
+      const from = chapterDragRef.current;
+      const to = chapterDragOverRef.current;
+      chapterDragRef.current = null;
+      chapterDragOverRef.current = null;
+
+      if (!from || !to) return;
+      if (from.scope !== to.scope) return; // مش بنسمح نسحب بين مستوى رئيسي ومجلد مباشرة
+      if (from.scope === 'folder' && from.folderName !== to.folderName) return; // بس داخل نفس المجلد
+      if (from.index === to.index) return;
+
+      const entries = getChapterEntries();
+
+      if (from.scope === 'top') {
+          if (from.index < 0 || from.index >= entries.length || to.index < 0 || to.index >= entries.length) return;
+          const moved = entries[from.index];
+          entries.splice(from.index, 1);
+          entries.splice(to.index, 0, moved);
+          commitChapterReorder(entries);
+      } else {
+          const folderEntry = entries.find(en => en.isFolder && en.folderName === from.folderName);
+          if (!folderEntry) return;
+          const items = [...folderEntry.items];
+          if (from.index < 0 || from.index >= items.length || to.index < 0 || to.index >= items.length) return;
+          const movedItem = items[from.index];
+          items.splice(from.index, 1);
+          items.splice(to.index, 0, movedItem);
+          folderEntry.items = items;
+          commitChapterReorder(entries);
       }
   };
 
@@ -371,7 +585,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
   const openModal = async (type, data = {}) => {
       setFormData({ 
     title: '', url: '', price: 0, description: '', notifyStudents: false,
-    durHours: '', durMinutes: '', durSeconds: ''
+    durHours: '', durMinutes: '', durSeconds: '', folderName: ''
 });
       setNotifyPdf(false);
       setVideoFile(null);
@@ -384,8 +598,22 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
               url: '', 
               price: data.price || 0 ,
               description: data.description || '',
-              notifyStudents: false
+              notifyStudents: false,
+              folderName: data.folder_name || ''
           });
+      }
+
+      if (['add_chapter', 'edit_chapter'].includes(type)) {
+          // لو الفصل الحالي (عند التعديل) له مجلد بالفعل، أو المادة تحتوي
+          // على مجلدات موجودة مسبقاً، نبدأ بوضع "اختيار من الموجود" لتسهيل
+          // العملية على المدرس. لو المادة لا تحتوي على أي مجلدات، نعرض حقل
+          // كتابة مباشرة.
+          const existing = Array.from(new Set(
+              (selectedSubject?.chapters || [])
+                  .map(c => (c.folder_name || '').trim())
+                  .filter(Boolean)
+          ));
+          setFolderMode(existing.length > 0 ? 'existing' : 'new');
       }
 
       if (type === 'exam_editor') {
@@ -611,7 +839,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
       {!selectedCourse && (
           <div className="grid-cards">
               {courses.map((c, index) => (
-                  <div key={c.id} className="card folder-card draggable-item" onClick={() => setSelectedCourse(c)} draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragEnd={(e) => onDragEnd(e, 'courses')}>
+                  <div key={c.id} className="card folder-card draggable-item" onClick={() => setSelectedCourse(c)} draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragOver={onDragOver} onDragEnd={(e) => onDragEnd(e, 'courses')}>
                       <div className="card-actions-abs">
                           <button className="btn-icon danger" onClick={(e) => {e.stopPropagation(); handleDelete('courses', c.id)}}>{Icons.trash}</button>
                           <div className="drag-handle-abs" onClick={e => e.stopPropagation()}>{Icons.drag}</div>
@@ -636,6 +864,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                     draggable 
                     onDragStart={(e) => onDragStart(e, index)} 
                     onDragEnter={(e) => onDragEnter(e, index)} 
+                    onDragOver={onDragOver}
                     onDragEnd={(e) => onDragEnd(e, 'subjects')}
                   >
                       <div className="card-actions-abs">
@@ -661,12 +890,56 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                   </div>
                   <div className="list-group">
                       {selectedSubject.chapters?.length === 0 && <div className="empty">لا توجد فصول</div>}
-                      {selectedSubject.chapters?.map((ch, index) => (
-                          <div key={ch.id} className="list-item clickable draggable-item" onClick={() => setSelectedChapter(ch)} draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragEnd={(e) => onDragEnd(e, 'chapters')}>
-                              <div className="drag-handle" onClick={e => e.stopPropagation()}>{Icons.drag}</div>
-                              <div className="info"><strong>{ch.title}</strong><small>{ch.videos?.length || 0} فيديو • {ch.pdfs?.length || 0} ملف</small></div>
-                              <button className="btn-icon danger" onClick={(e) => {e.stopPropagation(); handleDelete('chapters', ch.id)}}>{Icons.trash}</button>
-                          </div>
+                      {getChapterEntries().map((entry, entryIndex) => (
+                          entry.isFolder ? (
+                              <div
+                                key={`folder-${entry.folderName}`}
+                                className="chapter-folder-group draggable-item"
+                                draggable
+                                onDragStart={(e) => onChapterDragStart(e, 'top', null, entryIndex)}
+                                onDragEnter={(e) => onChapterDragEnter(e, 'top', null, entryIndex)}
+                                onDragOver={onChapterDragOver}
+                                onDragEnd={onChapterDragEnd}
+                              >
+                                  <div
+                                    className="chapter-folder-header"
+                                    onClick={() => toggleChapterFolder(entry.folderName)}
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '10px',
+                                        background: 'var(--bg-base)',
+                                        border: '1px solid rgba(212, 175, 55, 0.3)',
+                                        borderRadius: '10px',
+                                        padding: '10px 14px',
+                                        cursor: 'pointer'
+                                    }}
+                                  >
+                                      <span className="drag-handle" onClick={e => e.stopPropagation()} style={{display: 'flex', cursor: 'grab', color: 'var(--text-muted)'}}>{Icons.drag}</span>
+                                      <span className="chapter-folder-icon" style={{display: 'flex', color: 'var(--gold)'}}>{Icons.folder}</span>
+                                      <span className="chapter-folder-name" style={{flex: 1, fontWeight: 'bold', color: 'var(--text-primary)', fontSize: '0.95em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{entry.folderName}</span>
+                                      <span className="chapter-folder-count" style={{fontSize: '0.8em', fontWeight: 'bold', color: 'var(--text-muted)'}}>{entry.items.length}</span>
+                                      <span className="chapter-folder-chevron" style={{color: 'var(--text-muted)', fontSize: '0.9em', width: '14px', textAlign: 'center'}}>
+                                          {openChapterFolders.has(entry.folderName) ? '▴' : '▾'}
+                                      </span>
+                                  </div>
+                                  {openChapterFolders.has(entry.folderName) && (
+                                      <div className="chapter-folder-items" style={{display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', paddingInlineStart: '14px', borderInlineStart: '2px solid rgba(212, 175, 55, 0.2)'}}>
+                                          {entry.items.map(({ chapter }, itemIndex) => renderChapterItem(chapter, {
+                                              onDragStart: (e) => onChapterDragStart(e, 'folder', entry.folderName, itemIndex),
+                                              onDragEnter: (e) => onChapterDragEnter(e, 'folder', entry.folderName, itemIndex),
+                                              onDragOver: onChapterDragOver,
+                                              onDragEnd: onChapterDragEnd,
+                                          }, true))}
+                                      </div>
+                                  )}
+                              </div>
+                          ) : renderChapterItem(entry.chapter, {
+                              onDragStart: (e) => onChapterDragStart(e, 'top', null, entryIndex),
+                              onDragEnter: (e) => onChapterDragEnter(e, 'top', null, entryIndex),
+                              onDragOver: onChapterDragOver,
+                              onDragEnd: onChapterDragEnd,
+                          }, false)
                       ))}
                   </div>
               </div>
@@ -678,7 +951,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                   </div>
                   <div className="exam-grid">
                       {selectedSubject.exams?.map((ex, index) => (
-                          <div key={ex.id} className="exam-card-item draggable-item" draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragEnd={(e) => onDragEnd(e, 'exams')}>
+                          <div key={ex.id} className="exam-card-item draggable-item" draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragOver={onDragOver} onDragEnd={(e) => onDragEnd(e, 'exams')}>
                               <div className="drag-handle-abs" onClick={e => e.stopPropagation()}>{Icons.drag}</div>
                               <div className="exam-icon">{Icons.exam}</div>
                               <div className="exam-info"><h4>{ex.title}</h4><span>{ex.duration_minutes} دقيقة</span></div>
@@ -704,7 +977,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                   </div>
                   <div className="media-grid">
                       {selectedChapter.videos?.map((v, index) => (
-                          <div key={v.id} className="media-card draggable-item" draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragEnd={(e) => onDragEnd(e, 'videos')}>
+                          <div key={v.id} className="media-card draggable-item" draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragOver={onDragOver} onDragEnd={(e) => onDragEnd(e, 'videos')}>
                               <div className="drag-handle-abs" onClick={e => e.stopPropagation()}>{Icons.drag}</div>
                               <div className="thumb video-thumb">{Icons.video}</div>
                               <div className="media-body">
@@ -769,7 +1042,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                   </div>
                   <div className="list-group">
                       {selectedChapter.pdfs?.map((p, index) => (
-                          <div key={p.id} className="list-item draggable-item" draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragEnd={(e) => onDragEnd(e, 'pdfs')}>
+                          <div key={p.id} className="list-item draggable-item" draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragOver={onDragOver} onDragEnd={(e) => onDragEnd(e, 'pdfs')}>
                               <div className="drag-handle" onClick={e => e.stopPropagation()}>{Icons.drag}</div>
                               <div className="info"><span className="icon-text pdf-icon">{Icons.pdf}</span><strong>{p.title}</strong></div>
                               <button className="btn-icon danger" onClick={() => handleDelete('pdfs', p.id)}>{Icons.trash}</button>
@@ -793,6 +1066,71 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                     placeholder="اكتب العنوان..." 
                   />
               </div>
+
+              {['add_chapter', 'edit_chapter'].includes(modalType) && (() => {
+                  const existingFolders = Array.from(new Set(
+                      (selectedSubject?.chapters || [])
+                          .map(c => (c.folder_name || '').trim())
+                          .filter(Boolean)
+                  ));
+                  const showDropdown = existingFolders.length > 0 && folderMode !== 'new';
+
+                  return (
+                      <div className="form-group">
+                          <label>المجلد (اختياري)</label>
+
+                          {existingFolders.length > 0 && (
+                              <select
+                                className="input"
+                                value={showDropdown ? (formData.folderName || '') : '__new__'}
+                                onChange={e => {
+                                    const v = e.target.value;
+                                    if (v === '__new__') {
+                                        setFolderMode('new');
+                                        setFormData({...formData, folderName: ''});
+                                    } else {
+                                        setFolderMode('existing');
+                                        setFormData({...formData, folderName: v});
+                                    }
+                                }}
+                                style={{marginBottom: showDropdown ? 0 : '8px'}}
+                              >
+                                  <option value="">بدون مجلد</option>
+                                  {existingFolders.map(f => (
+                                      <option key={f} value={f}>📁 {f}</option>
+                                  ))}
+                                  <option value="__new__">➕ مجلد جديد...</option>
+                              </select>
+                          )}
+
+                          {!showDropdown && (
+                              <input
+                                className="input"
+                                autoFocus={existingFolders.length > 0}
+                                value={formData.folderName}
+                                onChange={e=>setFormData({...formData, folderName: e.target.value})}
+                                placeholder="مثال: الترم الأول (اتركه فارغاً لعدم استخدام مجلد)"
+                                style={{marginTop: existingFolders.length > 0 ? '8px' : 0}}
+                              />
+                          )}
+
+                          {existingFolders.length > 0 && folderMode === 'new' && (
+                              <button
+                                type="button"
+                                className="btn-small"
+                                style={{marginTop: '8px'}}
+                                onClick={() => { setFolderMode('existing'); setFormData({...formData, folderName: ''}); }}
+                              >
+                                  {Icons.back} الاختيار من المجلدات الموجودة
+                              </button>
+                          )}
+
+                          <small style={{color: 'var(--text-muted)', display: 'block', marginTop: '6px'}}>
+                              الفصول التي تحمل نفس اسم المجلد تُعرض مجمّعة معاً للطالب داخل التطبيق.
+                          </small>
+                      </div>
+                  );
+              })()}
 
               {['add_course', 'edit_course', 'add_subject', 'edit_subject'].includes(modalType) && (
                   <div className="form-group">
@@ -917,8 +1255,8 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                       else if (modalType === 'add_subject') apiCall('create', 'subjects', { course_id: selectedCourse.id, title: formData.title, price: formData.price });
                       else if (modalType === 'edit_subject') apiCall('update', 'subjects', { id: selectedSubject.id, title: formData.title, price: formData.price });
                       
-                      else if (modalType === 'add_chapter') apiCall('create', 'chapters', { subject_id: selectedSubject.id, title: formData.title });
-                      else if (modalType === 'edit_chapter') apiCall('update', 'chapters', { id: selectedChapter.id, title: formData.title });
+                      else if (modalType === 'add_chapter') apiCall('create', 'chapters', { subject_id: selectedSubject.id, title: formData.title, folder_name: formData.folderName?.trim() || null });
+                      else if (modalType === 'edit_chapter') apiCall('update', 'chapters', { id: selectedChapter.id, title: formData.title, folder_name: formData.folderName?.trim() || null });
                       
                       else if (modalType === 'add_video') handleSaveVideo();
                   }}>حفظ</button>
@@ -1360,6 +1698,17 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
         .list-item .info { flex: 1; }
         .list-item .info strong { display: block; color: var(--text-primary); margin-bottom: 3px; }
         .list-item .info small { color: var(--text-muted); }
+        .folder-badge { display: inline-block; font-size: 0.75em; color: var(--gold); background: rgba(212, 175, 55, 0.12); border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 6px; padding: 2px 8px; margin-bottom: 5px; }
+        .list-item .info .chapter-counts { display: block; margin-top: 4px; }
+
+        /* ✅ [جديد] مجموعة مجلد قابلة للطي في قائمة الفصول */
+        .chapter-folder-group { margin-bottom: 12px; }
+        .chapter-folder-header:hover { background: var(--bg-hover); border-color: var(--gold); }
+        .chapter-folder-icon svg { width: 18px; height: 18px; }
+        .chapter-item-compact .info strong,
+        .chapter-item-compact .info > div:first-child { font-size: 0.92em; }
+        .chapter-item-compact .info small,
+        .chapter-item-compact .chapter-counts { font-size: 0.85em; }
         .list-item .icon-text { margin-left: 10px; display: inline-flex; vertical-align: middle; }
         .list-item .pdf-icon { color: #f472b6; }
         

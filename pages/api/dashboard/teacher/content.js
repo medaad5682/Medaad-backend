@@ -163,7 +163,7 @@ export default async (req, res) => {
             .select(`
                 *,
                 chapters (
-                    id, title, sort_order,
+                    id, title, sort_order, folder_name,
                     videos (id, title, bunny_video_id, youtube_video_id, duration, sort_order, encoding_status),
                     pdfs (id, title, file_path)
                 ),
