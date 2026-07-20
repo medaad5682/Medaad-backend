@@ -61,7 +61,7 @@ function resolveVariantUrl(masterUrl, variantUri) {
 }
 
 // يجلب نص الـ master playlist ويستخرج منه كل الجودات المتاحة
-async function extractBunnyQualities(masterUrl, log, errLog) {
+async function extractBunnyQualities(masterUrl, log, errLog, videoInfo = '') {
     try {
         const response = await axios.get(masterUrl, {
             responseType: 'text',
@@ -136,7 +136,7 @@ async function extractBunnyQualities(masterUrl, log, errLog) {
         log(`✅ Bunny master playlist parsed: ${availableQualities.length} qualities found.`);
         return availableQualities;
     } catch (parseErr) {
-        errLog(`⚠️ Bunny m3u8 parsing failed: ${parseErr.message}`);
+        errLog(`⚠️ Bunny m3u8 parsing failed: ${parseErr.message}${videoInfo ? ` | ${videoInfo}` : ''}`);
         return [];
     }
 }
@@ -291,7 +291,7 @@ export default async (req, res) => {
 
                     // ✅ [جديد] نحلل master playlist هنا في السيرفر ونستخرج
                     // الجودات المختلفة، بدل تمرير رابط الماستر فقط للتطبيق.
-                    const bunnyQualities = await extractBunnyQualities(bunnyMasterUrl, log, errLog);
+                    const bunnyQualities = await extractBunnyQualities(bunnyMasterUrl, log, errLog, videoInfoLog);
 
                     if (bunnyQualities.length > 0) {
                         proxyResult.availableQualities = bunnyQualities;
