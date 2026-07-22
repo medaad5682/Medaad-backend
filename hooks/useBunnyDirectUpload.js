@@ -110,6 +110,15 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
   }
 }
 
+// ✅ عدد محاولات إعادة الاتصال التلقائية بعد أن يستنفد tus-js-client قائمة
+// retryDelays الداخلية الخاصة به (أي بعد أن "يموت" كائن الرفع فعلياً).
+// أي تقدّم حقيقي في الرفع (onProgress) يُصفّر هذا العدّاد من جديد، لذا
+// اتصال متذبذب لكنه يتقدّم تدريجياً لن يستنفد المحاولات أبداً — فقط انقطاع
+// تام ومستمر (لا تقدّم إطلاقاً عبر كل المحاولات) يصل لحد MAX_AUTO_RETRIES
+// ويطلب من المستخدم الضغط يدوياً على "استكمال".
+const MAX_AUTO_RETRIES = 6;
+const AUTO_RETRY_BASE_DELAY_MS = 5000; // 5s, 10s, 15s ... حتى 60s كحد أقصى
+
 export function useBunnyDirectUpload() {
   const [progress, setProgress]   = useState(0);
   const [status, setStatus]       = useState('idle');
@@ -120,6 +129,8 @@ export function useBunnyDirectUpload() {
   const uploadRef = useRef(null);
   // lastUploadOptionsRef: كل المعطيات اللازمة لإعادة بناء كائن TUS عند الاستئناف
   const lastUploadOptionsRef = useRef(null);
+  // autoRetryCountRef: عدد محاولات إعادة الاتصال التلقائية المتتالية بدون أي تقدّم
+  const autoRetryCountRef = useRef(0);
 
   async function _createFreshSession({ file, chapterId, title, notifyStudents, sortOrder, localDuration }) {
     clearSession(file);
@@ -163,6 +174,7 @@ export function useBunnyDirectUpload() {
     }
 
     setError(null); setProgress(0); setCurrentVideoId(null);
+    autoRetryCountRef.current = 0; // رفع جديد بالكامل — نبدأ عدّاد إعادة الاتصال من الصفر
 
     let localDuration = 0;
     try { localDuration = await getVideoDurationLocal(file); } catch (_) {}
@@ -204,9 +216,15 @@ export function useBunnyDirectUpload() {
           // retryDelays مُعادة: ضرورية للمقاومة الطبيعية لاهتزاز الشبكة.
           // لكن هذه المرة resume() لن يستدعي abort() على كائن حي،
           // لأننا نبني كائناً جديداً فقط بعد أن يموت القديم (status=error).
-          retryDelays: [0, 3000, 6000, 12000, 24000],
+          // ⏱️ مُمدَّدة من ~45 ثانية إلى أكثر من 4 دقائق إجمالاً — الفترة
+          // القصيرة السابقة كانت تجعل أي اهتزاز شبكة عادي (بضع ثوانٍ) يقتل
+          // كائن الرفع بالكامل ويظهر "انقطع الاتصال" رغم أن الإنترنت سليم.
+          retryDelays: [0, 3000, 6000, 12000, 24000, 30000, 60000, 60000, 60000],
 
-          chunkSize: 50 * 1024 * 1024,
+          // 📦 تقليل حجم القطعة من 50MB إلى 20MB يقلّل مدة طلب PATCH الواحد،
+          // فيقلّ احتمال أن يتجاوز الطلب أي مهلة زمنية (timeout) وسيطة أثناء
+          // نقل قطعة ضخمة على اتصال بطيء أو متعدد الرفعات المتزامنة.
+          chunkSize: 20 * 1024 * 1024,
           removeFingerprintOnSuccess: true,
 
           headers: {
@@ -225,6 +243,9 @@ export function useBunnyDirectUpload() {
           onError(err) { reject(err); },
 
           onProgress(bytesUploaded, bytesTotal) {
+            // ✅ أي تقدّم فعلي = الاتصال يعمل فعلياً، نُصفّر عدّاد إعادة
+            // الاتصال التلقائية حتى لا تُستنفد المحاولات بسبب اهتزاز مؤقت
+            autoRetryCountRef.current = 0;
             setProgress(Math.min(99, Math.round((bytesUploaded / bytesTotal) * 100)));
           },
 
@@ -289,8 +310,25 @@ export function useBunnyDirectUpload() {
         }
       }
 
-      // انقطاع شبكة عادي — الكائن مات بعد استنزاف retryDelays
-      setError('انقطع الاتصال — اضغط "حفظ" للمتابعة من نقطة التوقف');
+      // انقطاع شبكة عادي — الكائن مات بعد استنزاف retryDelays الداخلية لـ tus.
+      // ✅ بدلاً من إيقاف الرفع فوراً وانتظار المستخدم، نحاول إعادة الاتصال
+      // تلقائياً عدة مرات (نفس sessionData ما زالت صالحة لأنها ليست 401/404).
+      if (autoRetryCountRef.current < MAX_AUTO_RETRIES) {
+        autoRetryCountRef.current += 1;
+        const attempt = autoRetryCountRef.current;
+        const delayMs = Math.min(AUTO_RETRY_BASE_DELAY_MS * attempt, 60000);
+
+        setStatus('reconnecting');
+        setError(`انقطع الاتصال — جاري إعادة المحاولة تلقائياً (${attempt}/${MAX_AUTO_RETRIES})...`);
+
+        await new Promise((r) => setTimeout(r, delayMs));
+        await _doTusUpload({ file, sessionData, localDuration, onComplete, onError });
+        return;
+      }
+
+      // استُنفدت كل محاولات إعادة الاتصال التلقائية بدون أي تقدّم — الآن
+      // فقط نطلب من المستخدم تدخلاً يدوياً (قد يكون انقطاعاً فعلياً طويلاً)
+      setError('انقطع الاتصال بعد عدة محاولات تلقائية — اضغط "استكمال" للمتابعة من نقطة التوقف');
       setStatus('error');
       onError?.(err);
     }
@@ -346,6 +384,7 @@ export function useBunnyDirectUpload() {
     // الكائن القديم ميت (uploadRef.current = null تم في catch أعلاه)
     // لكن نُصفّره هنا أيضاً دفاعياً
     uploadRef.current = null;
+    autoRetryCountRef.current = 0; // استئناف يدوي — منح المستخدم دورة محاولات تلقائية جديدة
 
     setError(null);
     setStatus('uploading');
@@ -359,6 +398,7 @@ export function useBunnyDirectUpload() {
     if (current) { try { current.abort(); } catch (_) {} }
     if (file) { clearSession(file); clearTusInternalStorage(file); }
     lastUploadOptionsRef.current = null;
+    autoRetryCountRef.current = 0;
     setProgress(0); setStatus('idle'); setError(null); setCurrentVideoId(null);
   }, []);
 

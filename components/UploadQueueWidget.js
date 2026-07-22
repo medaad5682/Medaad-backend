@@ -11,6 +11,7 @@ const STATUS_LABELS = {
   requesting: 'جاري إعداد جلسة الرفع...',
   uploading: 'جاري الرفع...',
   confirming: 'جاري حفظ البيانات...',
+  reconnecting: 'انقطع الاتصال، جاري إعادة المحاولة تلقائياً...',
   done: 'اكتمل الرفع',
   error: 'حدث خطأ',
   cancelled: 'تم الإلغاء',
@@ -41,7 +42,7 @@ export default function UploadQueueWidget({ uploads, onCancel, onResume, onDismi
   if (!uploads || uploads.length === 0) return null;
 
   const activeCount = uploads.filter((u) =>
-    ['requesting', 'uploading', 'confirming'].includes(u.status)
+    ['requesting', 'uploading', 'confirming', 'reconnecting'].includes(u.status)
   ).length;
 
   return (
@@ -90,19 +91,19 @@ export default function UploadQueueWidget({ uploads, onCancel, onResume, onDismi
                 )}
               </div>
 
-              {['requesting', 'uploading', 'confirming'].includes(u.status) && (
+              {['requesting', 'uploading', 'confirming', 'reconnecting'].includes(u.status) && (
                 <div className="uqw-progress-track">
                   <div className="uqw-progress-fill" style={{ width: `${u.progress}%` }} />
                 </div>
               )}
 
               <div className="uqw-item-status">
-                {u.status === 'error' && u.error ? u.error : STATUS_LABELS[u.status]}
+                {(u.status === 'error' || u.status === 'reconnecting' || u.status === 'confirming') && u.error ? u.error : STATUS_LABELS[u.status]}
                 {u.status === 'uploading' && ` ${u.progress}%`}
               </div>
 
               <div className="uqw-item-acts">
-                {u.status === 'uploading' && (
+                {(u.status === 'uploading' || u.status === 'reconnecting') && (
                   <button type="button" className="uqw-btn cancel" onClick={() => onCancel?.(u.id)}>
                     إلغاء
                   </button>

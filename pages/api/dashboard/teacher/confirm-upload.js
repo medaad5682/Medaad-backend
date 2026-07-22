@@ -157,46 +157,96 @@ export default async function handler(req, res) {
     console.warn(`⚠️ [confirm-upload] No duration yet for bunny_id=${bunnyVideoId} — Bunny Webhook will update it after encoding`);
   }
 
-  // 5. حفظ الفيديو في قاعدة البيانات فوراً بحالة encoding_status = 'waiting'
-  //   المعنى: الرفع اكتمل والملف وصل Bunny، لكن المعالجة لم تبدأ بعد.
+  // 5. ✅ تحديث الصف الذي أُنشئ مسبقاً في create-upload-session.js (بحالة 'uploading')
+  //   بدلاً من إدراج صف جديد. هذا يمنع تكرار الصفوف ويحترم أي تحديث حالة
+  //   وصل بالفعل من Bunny Webhook أثناء الرفع الطويل (مثال: قد يكون الفيديو
+  //   بدأ التشفير فعلياً وأصبح 'encoding' أو حتى 'ready' قبل أن يصل العميل هنا).
+  //
   //   دورة الحياة الكاملة:
-  //     'waiting'  → هنا (الرفع اكتمل، في انتظار Bunny)
-  //     'encoding' → Webhook Status=1  (Bunny بدأ المعالجة)
-  //     'ready'    → Webhook Status=3/4 (اكتملت المعالجة)
+  //     'uploading' → أُنشئ في create-upload-session (الرفع TUS لا يزال جارياً)
+  //     'waiting'    → هنا (الرفع اكتمل، في انتظار بدء المعالجة من Bunny)
+  //     'encoding'   → Webhook Status=1  (Bunny بدأ المعالجة)
+  //     'ready'      → Webhook Status=3/4 (اكتملت المعالجة)
 
   // ✅ تحديد ترتيب الفيديو: إذا أُرسل من الواجهة نستخدمه، وإلا نحسبه تلقائياً
   const finalSortOrder = (sortOrder !== null && sortOrder !== undefined)
     ? sortOrder
     : await getNextVideoSortOrder(chapterId);
 
-  const { data: insertedVideo, error: dbError } = await supabase
-    .from('videos')
-    .insert({
-      chapter_id: chapterId,
-      title: videoTitle,
-      bunny_video_id: bunnyVideoId,
-      sort_order: finalSortOrder,
-      duration: formattedDuration,
-      encoding_status: 'waiting', // ← الرفع اكتمل — ينتظر بدء المعالجة من Bunny
-      notify_students: wantsNotify, // ✅ تمرير المتغير الجديد لحفظ الخيار في قاعدة البيانات
-    })
-    .select('id')
-    .single();
+  const commonFields = {
+    title: videoTitle,
+    sort_order: finalSortOrder,
+    notify_students: wantsNotify,
+  };
+  // المدة: لا نستبدل مدة صالحة قد يكون الـ webhook قد كتبها بالفعل بـ '00:00'
+  if (!durationPending) {
+    commonFields.duration = formattedDuration;
+  }
 
-  if (dbError) {
-    console.error('❌ [confirm-upload] DB Insert Error:', dbError);
+  // أولاً: نحاول الانتقال 'uploading' → 'waiting' (الحالة الطبيعية إذا لم
+  // يصل أي Webhook بعد). eq('encoding_status', 'uploading') يضمن أننا لا
+  // نتراجع عن حالة أحدث وصلت فعلاً من Bunny.
+  const { data: updatedAsWaiting, error: updateErr1 } = await supabase
+    .from('videos')
+    .update({ ...commonFields, encoding_status: 'waiting' })
+    .eq('bunny_video_id', bunnyVideoId)
+    .eq('encoding_status', 'uploading')
+    .select('id, encoding_status')
+    .maybeSingle();
+
+  let finalRow = updatedAsWaiting;
+
+  if (!finalRow) {
+    // الصف تجاوز 'uploading' بالفعل (الـ webhook وصل أولاً وحدّثه إلى
+    // 'encoding' أو 'ready') — نحدّث بقية الحقول فقط دون لمس encoding_status.
+    const { data: updatedOther, error: updateErr2 } = await supabase
+      .from('videos')
+      .update(commonFields)
+      .eq('bunny_video_id', bunnyVideoId)
+      .select('id, encoding_status')
+      .maybeSingle();
+
+    if (updateErr2) {
+      console.error('❌ [confirm-upload] DB Update Error:', updateErr2);
+      return res.status(500).json({ error: 'فشل حفظ بيانات الفيديو في قاعدة البيانات' });
+    }
+    finalRow = updatedOther;
+  } else if (updateErr1) {
+    console.error('❌ [confirm-upload] DB Update Error:', updateErr1);
     return res.status(500).json({ error: 'فشل حفظ بيانات الفيديو في قاعدة البيانات' });
   }
 
-  console.log(`✅ [confirm-upload] Video saved. db_id=${insertedVideo.id}, bunny_id=${bunnyVideoId}, notify=${wantsNotify}, duration=${formattedDuration}, status=waiting`);
+  if (!finalRow) {
+    // لم يُعثر على صف مبدئي إطلاقاً (مثلاً: جلسة قديمة من قبل هذا التحديث،
+    // أو تم حذفه يدوياً) — نُدرجه الآن كحل احتياطي حتى لا يضيع الفيديو.
+    const { data: insertedVideo, error: insertErr } = await supabase
+      .from('videos')
+      .insert({
+        chapter_id: chapterId,
+        bunny_video_id: bunnyVideoId,
+        duration: formattedDuration,
+        encoding_status: 'waiting',
+        ...commonFields,
+      })
+      .select('id, encoding_status')
+      .single();
+
+    if (insertErr) {
+      console.error('❌ [confirm-upload] DB Fallback Insert Error:', insertErr);
+      return res.status(500).json({ error: 'فشل حفظ بيانات الفيديو في قاعدة البيانات' });
+    }
+    finalRow = insertedVideo;
+  }
+
+  console.log(`✅ [confirm-upload] Video confirmed. db_id=${finalRow.id}, bunny_id=${bunnyVideoId}, notify=${wantsNotify}, status=${finalRow.encoding_status}`);
 
   return res.status(200).json({
     success: true,
-    videoId: insertedVideo.id,
+    videoId: finalRow.id,
     bunnyVideoId,
     title: videoTitle,
     duration: formattedDuration,
-    encoding_status: 'waiting', // ← في انتظار بدء المعالجة من Bunny
+    encoding_status: finalRow.encoding_status,
     durationPending, // إشارة للواجهة أن المدة ستُحدَّث تلقائياً عبر Bunny Webhook
   });
 }

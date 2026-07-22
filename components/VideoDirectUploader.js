@@ -8,13 +8,14 @@ import { useRef, useState } from 'react';
 import { useBunnyDirectUpload } from '../hooks/useBunnyDirectUpload';
 
 const STATUS_LABELS = {
-  idle:        '',
-  requesting:  'جاري إعداد جلسة الرفع...',
-  uploading:   'جاري رفع الفيديو مباشرة إلى Bunny...',
-  confirming:  'جاري حفظ البيانات...',
-  done:        '✅ تم رفع الفيديو بنجاح',
-  error:       '❌ حدث خطأ أو انقطع الاتصال',
-  cancelled:   'تم إلغاء الرفع',
+  idle:         '',
+  requesting:   'جاري إعداد جلسة الرفع...',
+  uploading:    'جاري رفع الفيديو مباشرة إلى Bunny...',
+  confirming:   'جاري حفظ البيانات...',
+  reconnecting: 'انقطع الاتصال، جاري إعادة المحاولة تلقائياً...',
+  done:         '✅ تم رفع الفيديو بنجاح',
+  error:        '❌ حدث خطأ أو انقطع الاتصال',
+  cancelled:    'تم إلغاء الرفع',
 };
 
 /**
@@ -38,7 +39,7 @@ export default function VideoDirectUploader({
   // ✅ استخراج دالة resume من الـ Hook
   const { startUpload, cancel, reset, resume, progress, status, error } = useBunnyDirectUpload();
 
-  const isActive = ['requesting', 'uploading', 'confirming'].includes(status);
+  const isActive = ['requesting', 'uploading', 'confirming', 'reconnecting'].includes(status);
 
   async function handleFileChange(e) {
     const file = e.target.files?.[0];
@@ -87,9 +88,9 @@ export default function VideoDirectUploader({
       {/* شريط التقدم */}
       {isActive && (
         <div className="upload-progress">
-          <p className="status-label">{STATUS_LABELS[status]}</p>
+          <p className="status-label">{status === 'reconnecting' && error ? error : STATUS_LABELS[status]}</p>
 
-          {status === 'uploading' && (
+          {(status === 'uploading' || status === 'reconnecting') && (
             <>
               <div className="progress-bar-track">
                 <div

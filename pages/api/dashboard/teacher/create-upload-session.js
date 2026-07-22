@@ -44,7 +44,16 @@ export default async function handler(req, res) {
   const { user, error } = await requireTeacherOrAdmin(req, res);
   if (error) return;
 
-  const { chapterId, title, fileSize, expirationHours = 6 } = req.body;
+  // ⏱️ expirationHours مرفوع افتراضياً إلى 24 ساعة (كان 6) لتقليل احتمال
+  // انتهاء صلاحية التوقيع أثناء رفع فيديو كبير على اتصال بطيء.
+  const {
+    chapterId,
+    title,
+    fileSize,
+    expirationHours = 24,
+    notifyStudents = false, // ✅ نستقبلها الآن هنا لحفظها في الصف المبدئي
+    sortOrder = null,
+  } = req.body;
 
   if (!chapterId) {
     return res.status(400).json({ error: 'chapterId مطلوب' });
@@ -91,6 +100,49 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: 'فشل إنشاء الفيديو على السيرفر' });
   }
 
+  // 3.5 ✅ حفظ صف مبدئي في قاعدة البيانات فوراً — بحالة 'uploading'
+  //   لماذا؟ الفيديوهات الطويلة قد تستغرق دقائق/ساعات على اتصال بطيء لإتمام
+  //   رفعها TUS بالكامل. Bunny قد يبدأ بإرسال Webhook (Processing) قبل أن
+  //   يصل الملف بالكامل. سابقاً كنا نحفظ الصف فقط بعد اكتمال الرفع
+  //   (confirm-upload.js) فكان الـ webhook لا يجد الفيديو في DB ويتجاهله
+  //   نهائياً (بدون إعادة محاولة) — وهذا كان يُفقد تحديثات encoding_status
+  //   الحقيقية القادمة من Bunny. الآن الصف موجود من اللحظة الأولى.
+  let placeholderVideoId = null;
+  try {
+    const { data: rows } = await supabase
+      .from('videos')
+      .select('sort_order')
+      .eq('chapter_id', chapterId);
+    const nextSortOrder = (sortOrder !== null && sortOrder !== undefined)
+      ? sortOrder
+      : (rows && rows.length > 0 ? Math.max(...rows.map(r => r.sort_order ?? 0)) + 1 : 0);
+
+    const { data: inserted, error: insertErr } = await supabase
+      .from('videos')
+      .insert({
+        chapter_id: chapterId,
+        title: videoTitle,
+        bunny_video_id: bunnyVideoId,
+        sort_order: nextSortOrder,
+        duration: '00:00',
+        encoding_status: 'uploading', // ← رفع TUS لا يزال جارياً على العميل
+        notify_students: notifyStudents === true || notifyStudents === 'true',
+      })
+      .select('id')
+      .single();
+
+    if (insertErr) throw insertErr;
+    placeholderVideoId = inserted.id;
+  } catch (err) {
+    console.error('❌ [create-upload-session] Placeholder insert error:', err.message);
+    // تنظيف الفيديو الفارغ من Bunny — بدون صف DB لا فائدة من إبقائه
+    await fetch(`https://video.bunnycdn.com/library/${libraryId}/videos/${bunnyVideoId}`, {
+      method: 'DELETE',
+      headers: { AccessKey: apiKey },
+    }).catch(() => {});
+    return res.status(500).json({ error: 'فشل تجهيز صف الفيديو في قاعدة البيانات' });
+  }
+
   // 4. إنشاء توقيع (Signature) للرفع المباشر الموثق من Bunny
   let signature;
   let expiresAt;
@@ -104,11 +156,14 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error('❌ [create-upload-session] Signature error:', err.message);
-    // تنظيف الفيديو الفاشل من Bunny لتجنب بقاء ملفات فارغة
+    // تنظيف الفيديو الفاشل من Bunny والصف المبدئي في DB لتجنب بقاء بيانات يتيمة
     await fetch(`https://video.bunnycdn.com/library/${libraryId}/videos/${bunnyVideoId}`, {
       method: 'DELETE',
       headers: { AccessKey: apiKey },
     }).catch(() => {});
+    if (placeholderVideoId) {
+      await supabase.from('videos').delete().eq('id', placeholderVideoId).catch(() => {});
+    }
     return res.status(502).json({ error: `فشل إنشاء توقيع الرفع: ${err.message}` });
   }
 
@@ -118,6 +173,7 @@ export default async function handler(req, res) {
   return res.status(200).json({
     success: true,
     bunnyVideoId,      // سيُستخدم لاحقاً لربط الفيديو بالـ chapter في DB
+    videoId: placeholderVideoId, // ✅ صف DB تم إنشاؤه بالفعل بحالة 'uploading'
     libraryId,         // سيحتاجه العميل في headers
     signature,         // التوقيع الذي سيتم إرساله في الـ headers
     expiresAt,         // وقت الانتهاء
