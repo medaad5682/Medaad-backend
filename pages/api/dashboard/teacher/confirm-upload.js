@@ -1,5 +1,6 @@
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { supabase } from '../../../../lib/supabaseClient';
+import { createUploadLogger } from '../../../../lib/uploadLogger';
 
 // ===================================================================
 // ✅ تأكيد اكتمال الرفع المباشر وحفظ الفيديو في قاعدة البيانات
@@ -20,22 +21,30 @@ import { supabase } from '../../../../lib/supabaseClient';
 //   - المصدر الاحتياطي: bunnyVideo.length (غالباً 0 مباشرة بعد الرفع)
 //   - إذا بقيت 00:00، سيُحدّثها Bunny Webhook تلقائياً عند انتهاء التشفير
 //     → راجع /api/webhooks/bunny-encoding.js
+//
+// 📋 تسجيل مفصّل (logging): كل خطوة مسجّلة بالتفصيل عبر uploadLogger —
+// الطلب الوارد، التحقق من الصلاحية والملكية، التحقق من وجود الفيديو على
+// Bunny، منطق تحديد المدة، كل محاولة تحديث/إدراج في قاعدة البيانات (مع
+// الحالة قبل وبعد)، والرد النهائي.
 // ===================================================================
 
 // ============================================================
 // 🔢 دالة مساعدة: جلب قيمة sort_order التالية للفيديو الجديد
 // ============================================================
-async function getNextVideoSortOrder(chapterId) {
+async function getNextVideoSortOrder(chapterId, log) {
   try {
-    const { data: rows } = await supabase
+    log.dbCall('sort-order-lookup', 'videos', 'select', { chapterId });
+    const { data: rows, error } = await supabase
       .from('videos')
       .select('sort_order')
       .eq('chapter_id', chapterId);
+    log.dbResult('sort-order-lookup', 'videos', 'select', { data: rows, error });
 
     if (!rows || rows.length === 0) return 0;
     const maxOrder = Math.max(...rows.map(r => r.sort_order ?? 0));
     return maxOrder + 1;
-  } catch {
+  } catch (err) {
+    log.warn('sort-order-lookup', 'Failed to compute next sort order, defaulting to 0', { message: err.message });
     return 0;
   }
 }
@@ -67,35 +76,58 @@ function formatDuration(totalSeconds) {
   return `${mStr}:${sStr}`;
 }
 
-async function verifyChapterOwnership(chapterId, teacherId) {
+async function verifyChapterOwnership(chapterId, teacherId, log) {
   if (!chapterId) return false;
-  const { data: chapter } = await supabase
+  log.dbCall('ownership-check', 'chapters', 'select', { chapterId });
+  const { data: chapter, error } = await supabase
     .from('chapters')
     .select('subjects ( courses ( teacher_id ) )')
     .eq('id', chapterId)
     .single();
+  log.dbResult('ownership-check', 'chapters', 'select', { data: chapter, error });
 
   const courseTeacherId = chapter?.subjects?.courses?.teacher_id;
-  return courseTeacherId && String(courseTeacherId) === String(teacherId);
+  const isOwner = courseTeacherId && String(courseTeacherId) === String(teacherId);
+  log.step('ownership-check', `Ownership result for chapterId=${chapterId}`, { courseTeacherId, teacherId, isOwner: !!isOwner });
+  return isOwner;
 }
 
-async function verifyBunnyVideoExists(libraryId, apiKey, bunnyVideoId) {
-  const res = await fetch(
-    `https://video.bunnycdn.com/library/${libraryId}/videos/${bunnyVideoId}`,
-    { headers: { AccessKey: apiKey, accept: 'application/json' } }
-  );
-  if (!res.ok) return null;
-  return res.json();
+async function verifyBunnyVideoExists(libraryId, apiKey, bunnyVideoId, log) {
+  const url = `https://video.bunnycdn.com/library/${libraryId}/videos/${bunnyVideoId}`;
+  log.bunnyCall('bunny-verify', 'GET', url);
+  const start = Date.now();
+  const res = await fetch(url, { headers: { AccessKey: apiKey, accept: 'application/json' } });
+  const durationMs = Date.now() - start;
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    log.bunnyResult('bunny-verify', 'GET', url, { status: res.status, ok: false, body, durationMs });
+    return null;
+  }
+  const json = await res.json();
+  log.bunnyResult('bunny-verify', 'GET', url, { status: res.status, ok: true, body: json, durationMs });
+  return json;
 }
 
 export default async function handler(req, res) {
+  const log = createUploadLogger('confirm-upload');
+  const requestStartedAt = Date.now();
+
+  log.incoming(req);
+
   if (req.method !== 'POST') {
+    log.warn('method-check', `Rejected non-POST method: ${req.method}`);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
   // 1. التحقق من صلاحية المعلم
+  log.step('auth', 'Verifying teacher/admin session via requireTeacherOrAdmin...');
   const { user, error } = await requireTeacherOrAdmin(req, res);
-  if (error) return;
+  if (error) {
+    log.error('auth', 'Auth failed — response already sent by requireTeacherOrAdmin', { error });
+    return;
+  }
+  log.success('auth', 'Auth OK', { userId: user?.id, role: user?.role, teacherId: user?.teacherId, name: user?.name });
 
   const {
     bunnyVideoId,
@@ -106,12 +138,19 @@ export default async function handler(req, res) {
     durationSeconds = 0, // المدة المستخرجة من المتصفح محلياً (قد تكون 0 إذا فشل الاستخراج)
   } = req.body;
 
+  log.step('request-body', 'Parsed request body', {
+    bunnyVideoId, chapterId, title, notifyStudents, sortOrder, durationSeconds,
+  });
+
   if (!bunnyVideoId) {
+    log.warn('validation', 'Missing bunnyVideoId — rejecting request');
     return res.status(400).json({ error: 'bunnyVideoId مطلوب' });
   }
   if (!chapterId) {
+    log.warn('validation', 'Missing chapterId — rejecting request');
     return res.status(400).json({ error: 'chapterId مطلوب' });
   }
+  log.success('validation', 'Request body validated');
 
   // ✅ تنظيف وتحويل قيمة الإشعار إلى Boolean صريح للتأكد من حفظها كـ true/false
   const wantsNotify = notifyStudents === true || notifyStudents === 'true';
@@ -119,26 +158,35 @@ export default async function handler(req, res) {
   // تنظيف: نضمن أن durationSeconds رقم حقيقي وموجب
   const clientDuration = Number(durationSeconds);
   const hasValidClientDuration = isFinite(clientDuration) && clientDuration > 0;
+  log.step('duration-parse', 'Parsed client-side duration', { clientDuration, hasValidClientDuration, wantsNotify });
 
   // 2. التحقق من ملكية الفصل
   if (user.role !== 'super_admin') {
-    const isOwner = await verifyChapterOwnership(chapterId, user.teacherId);
+    const isOwner = await verifyChapterOwnership(chapterId, user.teacherId, log);
     if (!isOwner) {
+      log.error('ownership-check', 'Teacher does NOT own this chapter — rejecting', { chapterId, teacherId: user.teacherId });
       return res.status(403).json({ error: 'غير مصرح لك بالإضافة في هذا الفصل.' });
     }
+  } else {
+    log.step('ownership-check', 'Skipped — user is super_admin', { userId: user.id });
   }
 
   // 3. التحقق من وجود الفيديو فعلاً على Bunny (منع التزوير)
   const { libraryId, apiKey } = getLibraryConfig();
-  const bunnyVideo = await verifyBunnyVideoExists(libraryId, apiKey, bunnyVideoId);
+  const bunnyVideo = await verifyBunnyVideoExists(libraryId, apiKey, bunnyVideoId, log);
 
   if (!bunnyVideo) {
+    log.error('bunny-verify', 'Video not found on Bunny — cannot confirm upload', { bunnyVideoId });
     return res.status(400).json({ error: 'لم يتم العثور على الفيديو في السيرفر. تأكد من اكتمال الرفع.' });
   }
+  log.success('bunny-verify', 'Video exists on Bunny', {
+    bunnyVideoId, bunnyStatus: bunnyVideo.status, bunnyLength: bunnyVideo.length, bunnyTitle: bunnyVideo.title,
+  });
 
   // 4. التحقق من أن الفيديو ليس بحالة فشل
   // status: 5 = Failed, 8 = PresignedUploadFailed
   if (bunnyVideo.status === 5 || bunnyVideo.status === 8) {
+    log.error('bunny-verify', `Bunny reports upload failure (status=${bunnyVideo.status})`, { bunnyVideoId, bunnyStatus: bunnyVideo.status });
     return res.status(400).json({ error: 'فشل رفع الفيديو على السيرفر. يرجى المحاولة مرة أخرى.' });
   }
 
@@ -153,8 +201,12 @@ export default async function handler(req, res) {
   const formattedDuration = formatDuration(finalDurationSecs);
 
   const durationPending = finalDurationSecs <= 0;
+  log.step('duration-decision', 'Final duration decided', {
+    source: hasValidClientDuration ? 'client-browser' : (bunnyLength > 0 ? 'bunny-api' : 'none-pending-webhook'),
+    clientDuration, bunnyLength, finalDurationSecs, formattedDuration, durationPending,
+  });
   if (durationPending) {
-    console.warn(`⚠️ [confirm-upload] No duration yet for bunny_id=${bunnyVideoId} — Bunny Webhook will update it after encoding`);
+    log.warn('duration-decision', `No duration yet for bunny_id=${bunnyVideoId} — Bunny Webhook will update it after encoding`);
   }
 
   // 5. ✅ تحديث الصف الذي أُنشئ مسبقاً في create-upload-session.js (بحالة 'uploading')
@@ -171,7 +223,8 @@ export default async function handler(req, res) {
   // ✅ تحديد ترتيب الفيديو: إذا أُرسل من الواجهة نستخدمه، وإلا نحسبه تلقائياً
   const finalSortOrder = (sortOrder !== null && sortOrder !== undefined)
     ? sortOrder
-    : await getNextVideoSortOrder(chapterId);
+    : await getNextVideoSortOrder(chapterId, log);
+  log.step('sort-order', `Final sort order decided: ${finalSortOrder}`, { providedSortOrder: sortOrder, finalSortOrder });
 
   const commonFields = {
     title: videoTitle,
@@ -186,6 +239,9 @@ export default async function handler(req, res) {
   // أولاً: نحاول الانتقال 'uploading' → 'waiting' (الحالة الطبيعية إذا لم
   // يصل أي Webhook بعد). eq('encoding_status', 'uploading') يضمن أننا لا
   // نتراجع عن حالة أحدث وصلت فعلاً من Bunny.
+  log.dbCall('update-attempt-1', 'videos', "update (uploading → waiting)", {
+    bunnyVideoId, filter: "encoding_status='uploading'", payload: { ...commonFields, encoding_status: 'waiting' },
+  });
   const { data: updatedAsWaiting, error: updateErr1 } = await supabase
     .from('videos')
     .update({ ...commonFields, encoding_status: 'waiting' })
@@ -193,54 +249,69 @@ export default async function handler(req, res) {
     .eq('encoding_status', 'uploading')
     .select('id, encoding_status')
     .maybeSingle();
+  log.dbResult('update-attempt-1', 'videos', "update (uploading → waiting)", { data: updatedAsWaiting, error: updateErr1 });
 
   let finalRow = updatedAsWaiting;
 
   if (!finalRow) {
+    log.warn('update-attempt-2', `No row matched encoding_status='uploading' for bunny_id=${bunnyVideoId} — a webhook likely already advanced its status. Updating remaining fields only.`);
     // الصف تجاوز 'uploading' بالفعل (الـ webhook وصل أولاً وحدّثه إلى
     // 'encoding' أو 'ready') — نحدّث بقية الحقول فقط دون لمس encoding_status.
+    log.dbCall('update-attempt-2', 'videos', 'update (fields only, status untouched)', { bunnyVideoId, payload: commonFields });
     const { data: updatedOther, error: updateErr2 } = await supabase
       .from('videos')
       .update(commonFields)
       .eq('bunny_video_id', bunnyVideoId)
       .select('id, encoding_status')
       .maybeSingle();
+    log.dbResult('update-attempt-2', 'videos', 'update (fields only, status untouched)', { data: updatedOther, error: updateErr2 });
 
     if (updateErr2) {
-      console.error('❌ [confirm-upload] DB Update Error:', updateErr2);
+      log.error('update-attempt-2', 'DB Update Error (fatal)', { message: updateErr2.message, code: updateErr2.code });
       return res.status(500).json({ error: 'فشل حفظ بيانات الفيديو في قاعدة البيانات' });
     }
     finalRow = updatedOther;
   } else if (updateErr1) {
-    console.error('❌ [confirm-upload] DB Update Error:', updateErr1);
+    log.error('update-attempt-1', 'DB Update Error (fatal)', { message: updateErr1.message, code: updateErr1.code });
     return res.status(500).json({ error: 'فشل حفظ بيانات الفيديو في قاعدة البيانات' });
+  } else {
+    log.success('update-attempt-1', `Row transitioned uploading → waiting`, { dbVideoId: finalRow.id });
   }
 
   if (!finalRow) {
+    log.warn('fallback-insert', `No existing row found at all for bunny_id=${bunnyVideoId} (stale/pre-migration session, or row manually deleted) — inserting fallback row now.`);
     // لم يُعثر على صف مبدئي إطلاقاً (مثلاً: جلسة قديمة من قبل هذا التحديث،
     // أو تم حذفه يدوياً) — نُدرجه الآن كحل احتياطي حتى لا يضيع الفيديو.
+    const fallbackPayload = {
+      chapter_id: chapterId,
+      bunny_video_id: bunnyVideoId,
+      duration: formattedDuration,
+      encoding_status: 'waiting',
+      ...commonFields,
+    };
+    log.dbCall('fallback-insert', 'videos', 'insert', fallbackPayload);
     const { data: insertedVideo, error: insertErr } = await supabase
       .from('videos')
-      .insert({
-        chapter_id: chapterId,
-        bunny_video_id: bunnyVideoId,
-        duration: formattedDuration,
-        encoding_status: 'waiting',
-        ...commonFields,
-      })
+      .insert(fallbackPayload)
       .select('id, encoding_status')
       .single();
+    log.dbResult('fallback-insert', 'videos', 'insert', { data: insertedVideo, error: insertErr });
 
     if (insertErr) {
-      console.error('❌ [confirm-upload] DB Fallback Insert Error:', insertErr);
+      log.error('fallback-insert', 'DB Fallback Insert Error (fatal)', { message: insertErr.message, code: insertErr.code });
       return res.status(500).json({ error: 'فشل حفظ بيانات الفيديو في قاعدة البيانات' });
     }
     finalRow = insertedVideo;
+    log.success('fallback-insert', 'Fallback row inserted successfully', { dbVideoId: finalRow.id });
   }
 
-  console.log(`✅ [confirm-upload] Video confirmed. db_id=${finalRow.id}, bunny_id=${bunnyVideoId}, notify=${wantsNotify}, status=${finalRow.encoding_status}`);
+  const totalMs = Date.now() - requestStartedAt;
+  log.success('done', `Video confirmed in ${totalMs}ms`, {
+    dbVideoId: finalRow.id, bunnyVideoId, notify: wantsNotify, status: finalRow.encoding_status,
+    duration: formattedDuration, durationPending, totalMs,
+  });
 
-  return res.status(200).json({
+  const responseBody = {
     success: true,
     videoId: finalRow.id,
     bunnyVideoId,
@@ -248,5 +319,7 @@ export default async function handler(req, res) {
     duration: formattedDuration,
     encoding_status: finalRow.encoding_status,
     durationPending, // إشارة للواجهة أن المدة ستُحدَّث تلقائياً عبر Bunny Webhook
-  });
+  };
+  log.outgoing(200, responseBody);
+  return res.status(200).json(responseBody);
 }

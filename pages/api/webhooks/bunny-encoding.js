@@ -44,11 +44,17 @@
 //     X-BunnyStream-Signature-Algorithm ← "hmac-sha256"
 //   المفتاح هو Library's Read-Only API key
 //   احفظه في .env كـ BUNNY_WEBHOOK_SECRET (اختياري — إذا غاب نقبل بدون تحقق)
+//
+// 📋 تسجيل مفصّل (logging): كل استدعاء Webhook مسجّل بالكامل — الـ payload
+// الخام، نتيجة التحقق من التوقيع، البحث عن الفيديو في DB، كل تحديث DB (قبل
+// وبعد)، استدعاء Bunny API لجلب المدة، ومحاولة إرسال الإشعار المؤجَّل
+// للطلاب بكل تفاصيلها (claim، نجاح/فشل الإرسال، سبب التجاهل إن وُجد).
 // ===================================================================
 
 import { supabase } from '../../../lib/supabaseClient';
 import admin from '../../../lib/firebaseAdmin'; // ✅ لإرسال إشعار الطلاب بمجرد اكتمال التشفير فعلياً
 import crypto from 'crypto';
+import { createUploadLogger } from '../../../lib/uploadLogger';
 
 // ✅ تعطيل bodyParser حتى نقرأ الجسم الخام للتحقق من التوقيع
 export const config = {
@@ -100,8 +106,14 @@ function verifySignature(rawBody, headers, secret) {
 }
 
 export default async function handler(req, res) {
+  const log = createUploadLogger('bunny-webhook');
+  const requestStartedAt = Date.now();
+
+  log.incoming(req);
+
   // ── 1. POST فقط ────────────────────────────────────────────────
   if (req.method !== 'POST') {
+    log.warn('method-check', `Rejected non-POST method: ${req.method}`);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
@@ -109,8 +121,9 @@ export default async function handler(req, res) {
   let rawBody;
   try {
     rawBody = await readRawBody(req);
+    log.step('read-body', `Raw body read (${rawBody.length} bytes)`);
   } catch (err) {
-    console.error('❌ [bunny-webhook] Body read error:', err.message);
+    log.error('read-body', 'Body read error', { message: err.message, stack: err.stack });
     return res.status(400).json({ error: 'Failed to read body' });
   }
 
@@ -118,10 +131,18 @@ export default async function handler(req, res) {
   const webhookSecret = process.env.BUNNY_WEBHOOK_SECRET;
   if (webhookSecret) {
     const valid = verifySignature(rawBody, req.headers, webhookSecret);
+    log.step('signature-check', valid ? 'Signature valid' : 'Signature INVALID', {
+      version: req.headers['x-bunnystream-signature-version'],
+      algorithm: req.headers['x-bunnystream-signature-algorithm'],
+      hasSignatureHeader: !!req.headers['x-bunnystream-signature'],
+      valid,
+    });
     if (!valid) {
-      console.error('❌ [bunny-webhook] Invalid signature — rejected');
+      log.error('signature-check', 'Invalid signature — rejecting webhook call');
       return res.status(401).json({ error: 'Invalid signature' });
     }
+  } else {
+    log.warn('signature-check', 'BUNNY_WEBHOOK_SECRET not set — accepting request WITHOUT signature verification');
   }
   // إذا لم يكن BUNNY_WEBHOOK_SECRET محدداً نقبل الطلب بدون تحقق
   // (مناسب للبداية — أضف المفتاح لاحقاً لمزيد من الأمان)
@@ -130,19 +151,23 @@ export default async function handler(req, res) {
   let payload;
   try {
     payload = JSON.parse(rawBody.toString('utf8'));
-  } catch {
+  } catch (err) {
+    log.error('parse-payload', 'Invalid JSON payload', { message: err.message, raw: rawBody.toString('utf8').slice(0, 500) });
     return res.status(400).json({ error: 'Invalid JSON' });
   }
 
   const { VideoGuid: bunnyVideoId, Status: statusCode, VideoLibraryId: payloadLibraryId } = payload;
 
-  console.log(`📨 [bunny-webhook] status=${statusCode}, bunny_id=${bunnyVideoId}`);
+  log.step('parse-payload', 'Payload parsed', { bunnyVideoId, statusCode, payloadLibraryId, fullPayload: payload });
+  log.success('parse-payload', `Webhook event received: status=${statusCode}, bunny_id=${bunnyVideoId}`);
 
   // ── 5. تجاهل أحداث المكتبات الأخرى ──────────────────────────
   const ourLibraryId = process.env.BUNNY_STREAM_LIBRARY_ID;
   if (ourLibraryId && payloadLibraryId && String(payloadLibraryId) !== String(ourLibraryId)) {
+    log.warn('library-check', `Ignoring event from a different library`, { payloadLibraryId, ourLibraryId });
     return res.status(200).json({ ignored: true, reason: 'wrong library' });
   }
+  log.step('library-check', 'Library matches — proceeding', { ourLibraryId });
 
   // ── 6. تصنيف الحدث حسب Status ────────────────────────────────
   //
@@ -154,49 +179,73 @@ export default async function handler(req, res) {
   const isProcessingEvent = statusCode === 1;
   const isFinishedEvent   = statusCode === 3 || statusCode === 4;
 
+  const statusLabels = {
+    0: 'Created', 1: 'Processing', 2: 'Transcoding', 3: 'Finished',
+    4: 'ResolutionFinished', 5: 'Failed', 6: 'PresignedUploadStarted',
+    7: 'PresignedUploadFinished', 8: 'PresignedUploadFailed',
+  };
+  log.step('classify-event', `Event classified as: ${statusLabels[statusCode] || 'Unknown'} (${statusCode})`, {
+    isProcessingEvent, isFinishedEvent,
+  });
+
   if (!isProcessingEvent && !isFinishedEvent) {
+    log.step('classify-event', `Status ${statusCode} (${statusLabels[statusCode] || 'Unknown'}) not handled — acknowledging and ignoring`);
     return res.status(200).json({ ignored: true, reason: `status ${statusCode} not handled` });
   }
 
   if (!bunnyVideoId) {
+    log.error('classify-event', 'Missing VideoGuid in payload — rejecting');
     return res.status(400).json({ error: 'Missing VideoGuid' });
   }
 
   // ── 7. جلب الفيديو من DB بواسطة bunny_video_id ───────────────
   // ✅ نجلب أيضاً title, chapter_id, notify_students حتى نتمكن من إرسال
   // إشعار "تم رفع فيديو" للطلاب بمجرد اكتمال التشفير فعلياً (وليس عند الإضافة)
+  log.dbCall('fetch-video', 'videos', 'select', { bunnyVideoId });
   const { data: video, error: fetchErr } = await supabase
     .from('videos')
     .select('id, title, chapter_id, duration, encoding_status, notify_students')
     .eq('bunny_video_id', bunnyVideoId)
     .single();
+  log.dbResult('fetch-video', 'videos', 'select', { data: video, error: fetchErr });
 
   if (fetchErr || !video) {
     // محذوف أو من مكتبة أخرى — نُعيد 200 لمنع Bunny من إعادة المحاولة
-    console.warn(`⚠️ [bunny-webhook] Video not found in DB: bunny_id=${bunnyVideoId}`);
+    log.warn('fetch-video', `Video not found in DB for bunny_id=${bunnyVideoId} — acknowledging with 200 to stop Bunny retries`, {
+      fetchErrMessage: fetchErr?.message,
+    });
     return res.status(200).json({ ignored: true, reason: 'not in DB' });
   }
+  log.success('fetch-video', `Found DB row db_id=${video.id} for bunny_id=${bunnyVideoId}`, {
+    dbVideoId: video.id, currentEncodingStatus: video.encoding_status, currentDuration: video.duration,
+    title: video.title, chapterId: video.chapter_id, notifyStudentsFlag: video.notify_students,
+  });
 
   // ── 8. حالة Processing (Status=1) → encoding ─────────────────
   if (isProcessingEvent) {
     // لا نتراجع إلى 'encoding' إذا وصل الـ ready مسبقاً (race condition نادر)
     if (video.encoding_status === 'ready') {
-      console.log(`ℹ️ [bunny-webhook] Already ready, ignoring processing event for bunny_id=${bunnyVideoId}`);
+      log.warn('processing-event', `Video db_id=${video.id} already 'ready' — ignoring stale processing event (race condition)`, { bunnyVideoId });
       return res.status(200).json({ ignored: true, reason: 'already ready' });
     }
 
+    log.dbCall('processing-event', 'videos', 'update', { dbVideoId: video.id, payload: { encoding_status: 'encoding' } });
     const { error: encErr } = await supabase
       .from('videos')
       .update({ encoding_status: 'encoding' })
       .eq('id', video.id);
+    log.dbResult('processing-event', 'videos', 'update', { data: encErr ? null : { id: video.id, encoding_status: 'encoding' }, error: encErr });
 
     if (encErr) {
-      console.error(`❌ [bunny-webhook] DB encoding update failed for db_id=${video.id}:`, encErr);
+      log.error('processing-event', `DB encoding update failed for db_id=${video.id}`, { message: encErr.message, code: encErr.code });
       return res.status(500).json({ error: 'DB update failed' });
     }
 
-    console.log(`🔄 [bunny-webhook] Encoding started: db_id=${video.id}, bunny_id=${bunnyVideoId}, status: ${video.encoding_status} → encoding`);
-    return res.status(200).json({ success: true, videoId: video.id, bunnyVideoId, encoding_status: 'encoding' });
+    const totalMs = Date.now() - requestStartedAt;
+    log.success('processing-event', `Encoding started: db_id=${video.id}, bunny_id=${bunnyVideoId}, status: ${video.encoding_status} → encoding (${totalMs}ms)`);
+    const respBody = { success: true, videoId: video.id, bunnyVideoId, encoding_status: 'encoding' };
+    log.outgoing(200, respBody);
+    return res.status(200).json(respBody);
   }
 
   // ── 9. حالة Finished (Status=3 أو 4) → ready ─────────────────
@@ -206,25 +255,29 @@ export default async function handler(req, res) {
   let durationSeconds = 0;
 
   try {
-    const apiRes = await fetch(
-      `https://video.bunnycdn.com/library/${libraryId}/videos/${bunnyVideoId}`,
-      { headers: { AccessKey: apiKey, accept: 'application/json' } }
-    );
+    const bunnyUrl = `https://video.bunnycdn.com/library/${libraryId}/videos/${bunnyVideoId}`;
+    log.bunnyCall('fetch-duration', 'GET', bunnyUrl);
+    const bunnyStart = Date.now();
+    const apiRes = await fetch(bunnyUrl, { headers: { AccessKey: apiKey, accept: 'application/json' } });
+    const bunnyMs = Date.now() - bunnyStart;
+
     if (apiRes.ok) {
       const apiData = await apiRes.json();
       durationSeconds = Number(apiData.length) || 0;
-      console.log(`📏 [bunny-webhook] Bunny API length=${durationSeconds}s for bunny_id=${bunnyVideoId}`);
+      log.bunnyResult('fetch-duration', 'GET', bunnyUrl, { status: apiRes.status, ok: true, body: { length: apiData.length, status: apiData.status }, durationMs: bunnyMs });
+      log.step('fetch-duration', `Bunny API length=${durationSeconds}s for bunny_id=${bunnyVideoId}`);
     } else {
-      console.error(`❌ [bunny-webhook] Bunny API returned ${apiRes.status}`);
+      log.bunnyResult('fetch-duration', 'GET', bunnyUrl, { status: apiRes.status, ok: false, body: null, durationMs: bunnyMs });
+      log.error('fetch-duration', `Bunny API returned non-OK status ${apiRes.status}`);
     }
   } catch (apiErr) {
-    console.error('❌ [bunny-webhook] Bunny API fetch failed:', apiErr.message);
+    log.error('fetch-duration', 'Bunny API fetch failed', { message: apiErr.message, stack: apiErr.stack });
   }
 
   if (durationSeconds <= 0) {
     // Bunny أخبرنا بالاكتمال لكن length لا تزال 0 — نادر جداً
     // نُعيد 500 حتى يُعيد Bunny المحاولة بعد قليل
-    console.warn(`⚠️ [bunny-webhook] length=0 despite status=${statusCode} for bunny_id=${bunnyVideoId}`);
+    log.warn('fetch-duration', `length=0 despite status=${statusCode} for bunny_id=${bunnyVideoId} — returning 500 so Bunny retries`);
     return res.status(500).json({ error: 'duration unavailable yet, will retry' });
   }
 
@@ -238,18 +291,20 @@ export default async function handler(req, res) {
     updatePayload.duration = formatted;
   }
 
+  log.dbCall('finished-event', 'videos', 'update', { dbVideoId: video.id, payload: updatePayload, previousDuration: currentDuration, previousStatus: currentEncodingStatus });
   const { error: updateErr } = await supabase
     .from('videos')
     .update(updatePayload)
     .eq('id', video.id);
+  log.dbResult('finished-event', 'videos', 'update', { data: updateErr ? null : { id: video.id, ...updatePayload }, error: updateErr });
 
   if (updateErr) {
-    console.error(`❌ [bunny-webhook] DB update failed for db_id=${video.id}:`, updateErr);
+    log.error('finished-event', `DB update failed for db_id=${video.id}`, { message: updateErr.message, code: updateErr.code });
     // نُعيد 500 حتى يُعيد Bunny المحاولة
     return res.status(500).json({ error: 'DB update failed' });
   }
 
-  console.log(`✅ [bunny-webhook] Video ready: db_id=${video.id}, bunny_id=${bunnyVideoId}, encoding_status: ${currentEncodingStatus} → ready, duration=${updatePayload.duration || currentDuration}`);
+  log.success('finished-event', `Video ready: db_id=${video.id}, bunny_id=${bunnyVideoId}, encoding_status: ${currentEncodingStatus} → ready, duration=${updatePayload.duration || currentDuration}`);
 
   // ── 11. 🔔 إرسال الإشعار المؤجَّل للطلاب (إن كان المعلم قد فعّله عند الإضافة) ──
   // هذا هو المكان الصحيح لإرسال إشعار "تم رفع فيديو": الآن فقط أصبح الفيديو
@@ -260,21 +315,28 @@ export default async function handler(req, res) {
   // فعلياً يُحدّث notify_students إلى false وينجح بإرسال الإشعار، أي طلب لاحق
   // لن يجد notify_students=true فيتجاهل الإرسال — فلا يتكرر الإشعار.
   if (video.notify_students) {
+    log.step('notify', `notify_students flag is TRUE for db_id=${video.id} — attempting to claim and send deferred notification`);
     try {
-      const { data: claimed } = await supabase
+      log.dbCall('notify-claim', 'videos', 'update (atomic claim)', { dbVideoId: video.id, filter: "notify_students=true" });
+      const { data: claimed, error: claimErr } = await supabase
         .from('videos')
         .update({ notify_students: false })
         .eq('id', video.id)
         .eq('notify_students', true)
         .select('id')
         .maybeSingle();
+      log.dbResult('notify-claim', 'videos', 'update (atomic claim)', { data: claimed, error: claimErr });
 
       if (claimed) {
-        const { data: chapterInfo } = await supabase
+        log.success('notify-claim', `Notification claimed by this webhook call for db_id=${video.id} — proceeding to send`);
+
+        log.dbCall('notify-chapter-lookup', 'chapters', 'select', { chapterId: video.chapter_id });
+        const { data: chapterInfo, error: chapterErr } = await supabase
           .from('chapters')
           .select('subject_id, subjects!inner(courses!inner(title))')
           .eq('id', video.chapter_id)
           .single();
+        log.dbResult('notify-chapter-lookup', 'chapters', 'select', { data: chapterInfo, error: chapterErr });
 
         const subjectId = chapterInfo?.subject_id;
         if (subjectId) {
@@ -289,35 +351,54 @@ export default async function handler(req, res) {
             data: { click_action: 'FLUTTER_NOTIFICATION_CLICK', type: 'subject', id: subjectId.toString() },
           };
 
-          await admin.messaging().send(message);
+          log.step('notify-send', 'Sending FCM push notification...', {
+            topic: message.topic, title: courseTitle, body: message.notification.body,
+          });
+          const fcmStart = Date.now();
+          try {
+            const fcmResponse = await admin.messaging().send(message);
+            log.success('notify-send', `FCM message sent successfully (${Date.now() - fcmStart}ms)`, { fcmMessageId: fcmResponse });
+          } catch (fcmErr) {
+            log.error('notify-send', 'FCM send failed', { message: fcmErr.message, code: fcmErr.code, stack: fcmErr.stack });
+            throw fcmErr;
+          }
 
-          await supabase.from('notifications').insert({
+          const notifRow = {
             title: courseTitle,
             body: `تم رفع فيديو: ${videoTitle}`,
             target_type: 'subject',
             target_id: subjectId.toString(),
             sender_role: 'teacher',
-          });
+          };
+          log.dbCall('notify-log-insert', 'notifications', 'insert', notifRow);
+          const { data: notifInserted, error: notifInsertErr } = await supabase.from('notifications').insert(notifRow).select('id').maybeSingle();
+          log.dbResult('notify-log-insert', 'notifications', 'insert', { data: notifInserted, error: notifInsertErr });
 
-          console.log(`🔔 [bunny-webhook] Deferred notification sent: db_id=${video.id}, subject_id=${subjectId}`);
+          log.success('notify', `Deferred notification fully sent: db_id=${video.id}, subject_id=${subjectId}`);
         } else {
-          console.warn(`⚠️ [bunny-webhook] Could not resolve subject for db_id=${video.id} — notification skipped`);
+          log.warn('notify-chapter-lookup', `Could not resolve subject_id for db_id=${video.id} — notification skipped`, { chapterId: video.chapter_id, chapterErr: chapterErr?.message });
         }
       } else {
-        console.log(`ℹ️ [bunny-webhook] Notification already claimed/sent by another event for db_id=${video.id}`);
+        log.step('notify-claim', `Notification already claimed/sent by another concurrent event for db_id=${video.id} — skipping to avoid duplicate`, { claimErr: claimErr?.message });
       }
     } catch (notifyErr) {
-      console.error(`⚠️ [bunny-webhook] Deferred notification error for db_id=${video.id}:`, notifyErr.message);
+      log.error('notify', `Deferred notification error for db_id=${video.id}`, { message: notifyErr.message, stack: notifyErr.stack });
       // فشل الإشعار لا يجب أن يفشّل الـ webhook — الفيديو أصبح 'ready' بنجاح فعلاً
     }
+  } else {
+    log.step('notify', `notify_students flag is false/unset for db_id=${video.id} — no notification to send`);
   }
 
-  return res.status(200).json({
+  const totalMs = Date.now() - requestStartedAt;
+  const responseBody = {
     success: true,
     videoId: video.id,
     bunnyVideoId,
     encoding_status: 'ready',
     duration: updatePayload.duration || currentDuration,
     updated: true,
-  });
+  };
+  log.success('done', `Webhook processed in ${totalMs}ms`, { ...responseBody, totalMs });
+  log.outgoing(200, responseBody);
+  return res.status(200).json(responseBody);
 }
