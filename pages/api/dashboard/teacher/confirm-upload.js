@@ -239,43 +239,60 @@ export default async function handler(req, res) {
   // أولاً: نحاول الانتقال 'uploading' → 'waiting' (الحالة الطبيعية إذا لم
   // يصل أي Webhook بعد). eq('encoding_status', 'uploading') يضمن أننا لا
   // نتراجع عن حالة أحدث وصلت فعلاً من Bunny.
+  //
+  // ⚠️ ملاحظة: المعلم قد يكون نسخ نفس الفيديو في أكثر من كورس واحد، مما
+  // يُنشئ أكثر من صف في DB بنفس bunny_video_id. لذا نستخدم .select() بدون
+  // .single() أو .maybeSingle() حتى لا نحصل على خطأ PGRST116 عند وجود
+  // أكثر من صف، ونُحدّث جميع الصفوف المطابقة بشكل صحيح.
   log.dbCall('update-attempt-1', 'videos', "update (uploading → waiting)", {
     bunnyVideoId, filter: "encoding_status='uploading'", payload: { ...commonFields, encoding_status: 'waiting' },
   });
-  const { data: updatedAsWaiting, error: updateErr1 } = await supabase
+  const { data: updatedAsWaitingRows, error: updateErr1 } = await supabase
     .from('videos')
     .update({ ...commonFields, encoding_status: 'waiting' })
     .eq('bunny_video_id', bunnyVideoId)
     .eq('encoding_status', 'uploading')
-    .select('id, encoding_status')
-    .maybeSingle();
-  log.dbResult('update-attempt-1', 'videos', "update (uploading → waiting)", { data: updatedAsWaiting, error: updateErr1 });
+    .select('id, encoding_status');
+  log.dbResult('update-attempt-1', 'videos', "update (uploading → waiting)", { data: updatedAsWaitingRows, error: updateErr1 });
 
-  let finalRow = updatedAsWaiting;
+  if (updateErr1) {
+    log.error('update-attempt-1', 'DB Update Error (fatal)', { message: updateErr1.message, code: updateErr1.code });
+    return res.status(500).json({ error: 'فشل حفظ بيانات الفيديو في قاعدة البيانات' });
+  }
+
+  let finalRow = (updatedAsWaitingRows && updatedAsWaitingRows.length > 0) ? updatedAsWaitingRows[0] : null;
 
   if (!finalRow) {
     log.warn('update-attempt-2', `No row matched encoding_status='uploading' for bunny_id=${bunnyVideoId} — a webhook likely already advanced its status. Updating remaining fields only.`);
-    // الصف تجاوز 'uploading' بالفعل (الـ webhook وصل أولاً وحدّثه إلى
-    // 'encoding' أو 'ready') — نحدّث بقية الحقول فقط دون لمس encoding_status.
+    // الصف (أو الصفوف) تجاوزت 'uploading' بالفعل (الـ webhook وصل أولاً وحدّثها
+    // إلى 'encoding' أو 'ready') — نحدّث بقية الحقول فقط دون لمس encoding_status.
     log.dbCall('update-attempt-2', 'videos', 'update (fields only, status untouched)', { bunnyVideoId, payload: commonFields });
-    const { data: updatedOther, error: updateErr2 } = await supabase
+    const { data: updatedOtherRows, error: updateErr2 } = await supabase
       .from('videos')
       .update(commonFields)
       .eq('bunny_video_id', bunnyVideoId)
-      .select('id, encoding_status')
-      .maybeSingle();
-    log.dbResult('update-attempt-2', 'videos', 'update (fields only, status untouched)', { data: updatedOther, error: updateErr2 });
+      .select('id, encoding_status');
+    log.dbResult('update-attempt-2', 'videos', 'update (fields only, status untouched)', { data: updatedOtherRows, error: updateErr2 });
 
     if (updateErr2) {
       log.error('update-attempt-2', 'DB Update Error (fatal)', { message: updateErr2.message, code: updateErr2.code });
       return res.status(500).json({ error: 'فشل حفظ بيانات الفيديو في قاعدة البيانات' });
     }
-    finalRow = updatedOther;
-  } else if (updateErr1) {
-    log.error('update-attempt-1', 'DB Update Error (fatal)', { message: updateErr1.message, code: updateErr1.code });
-    return res.status(500).json({ error: 'فشل حفظ بيانات الفيديو في قاعدة البيانات' });
+    finalRow = (updatedOtherRows && updatedOtherRows.length > 0) ? updatedOtherRows[0] : null;
+
+    if (updatedOtherRows && updatedOtherRows.length > 1) {
+      log.warn('update-attempt-2', `Updated ${updatedOtherRows.length} rows for bunny_id=${bunnyVideoId} (video copied to multiple courses)`, {
+        updatedIds: updatedOtherRows.map((r) => r.id),
+      });
+    }
   } else {
-    log.success('update-attempt-1', `Row transitioned uploading → waiting`, { dbVideoId: finalRow.id });
+    if (updatedAsWaitingRows.length > 1) {
+      log.warn('update-attempt-1', `Transitioned ${updatedAsWaitingRows.length} rows uploading → waiting for bunny_id=${bunnyVideoId} (video copied to multiple courses)`, {
+        updatedIds: updatedAsWaitingRows.map((r) => r.id),
+      });
+    } else {
+      log.success('update-attempt-1', `Row transitioned uploading → waiting`, { dbVideoId: finalRow.id });
+    }
   }
 
   if (!finalRow) {

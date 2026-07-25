@@ -82,6 +82,52 @@ async function getBunnyVideoIdsUnder(type, id) {
 }
 
 // ============================================================
+// 🛡️ دالة مساعدة: تُرجع فقط معرفات Bunny الآمن حذفها فعلياً من على
+// خوادم Bunny — أي التي لم يعد أي صف آخر في جدول videos يشير إليها.
+// ============================================================
+// لماذا هذا ضروري؟ bunny_video_id ليس مضموناً أن يكون فريداً في DB:
+// ميزة "النسخ المتقدم" (advanced-copy.js) تنسخ صف الفيديو إلى فصل/كورس
+// آخر بنفس bunny_video_id تماماً دون إنشاء ملف جديد فعلي على Bunny —
+// أي أن صفين (أو أكثر) قد يتشاركان نفس الفيديو الحقيقي على Bunny.
+// لو حذفنا الفيديو من Bunny فعلياً بمجرد حذف أحد هذين الصفين (أو حذف
+// كورس/مادة/فصل يحوي أحدهما)، سينكسر تشغيل الفيديو في كل مكان آخر لا
+// يزال يشير لنفس bunny_video_id، رغم أن صفه في DB لم يُحذف.
+//
+// ⚠️ يجب استدعاء هذه الدالة بعد تنفيذ حذف صفوف DB (وليس قبله)، حتى تعكس
+// نتيجة الاستعلام الحالة الحقيقية بعد الحذف (Cascade) — أي صف لا يزال
+// موجوداً في هذه اللحظة هو بالتأكيد صف خارج ما حذفناه للتو.
+// ============================================================
+async function getBunnyIdsSafeToDelete(bunnyVideoIds) {
+  const uniqueIds = [...new Set((bunnyVideoIds || []).filter(Boolean))];
+  if (uniqueIds.length === 0) return [];
+
+  try {
+    const { data: stillReferenced, error } = await supabase
+      .from('videos')
+      .select('bunny_video_id')
+      .in('bunny_video_id', uniqueIds);
+
+    if (error) {
+      // في حالة فشل التحقق: لا نحذف أي شيء من Bunny احتياطاً — تجنّب حذف
+      // فيديو قد لا يزال مستخدَماً في مكان آخر أهم من تسريب فيديو يتيم.
+      console.error('⚠️ [Bunny] فشل التحقق من الفيديوهات المشتركة قبل الحذف — سيتم تخطي حذف كل الفيديوهات من Bunny احتياطاً:', error.message);
+      return [];
+    }
+
+    const stillReferencedIds = new Set((stillReferenced || []).map((v) => v.bunny_video_id));
+    const idsToSkip = uniqueIds.filter((vid) => stillReferencedIds.has(vid));
+    if (idsToSkip.length > 0) {
+      console.log(`ℹ️ [Bunny] تخطي حذف ${idsToSkip.length} فيديو من Bunny لأنها لا تزال مستخدَمة في صف آخر (غالباً منسوخة عبر "النسخ المتقدم"):`, idsToSkip);
+    }
+
+    return uniqueIds.filter((vid) => !stillReferencedIds.has(vid));
+  } catch (e) {
+    console.error('⚠️ [Bunny] خطأ غير متوقع أثناء التحقق من الفيديوهات المشتركة قبل الحذف:', e.message);
+    return [];
+  }
+}
+
+// ============================================================
 // 🔢 دالة مساعدة: جلب قيمة sort_order التالية لعنصر جديد
 // بدلاً من 999 الثابتة، نحسب: MAX(sort_order) + 1 داخل نفس الحاوية
 // ============================================================
@@ -397,8 +443,9 @@ export default async (req, res) => {
        if (error) throw error;
 
        if (bunnyVideoIdsToDelete.length > 0) {
+           const idsSafeToDelete = await getBunnyIdsSafeToDelete(bunnyVideoIdsToDelete);
            // لا ننتظر النتيجة حتى لا نؤخر الرد على التطبيق
-           bunnyVideoIdsToDelete.forEach(vid => deleteVideoFromBunny(vid));
+           idsSafeToDelete.forEach(vid => deleteVideoFromBunny(vid));
        }
 
        return res.status(200).json({ success: true });

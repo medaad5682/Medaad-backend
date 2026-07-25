@@ -121,6 +121,7 @@ export default async function handler(req, res) {
                           duration: v.duration,
                           encoding_status: v.encoding_status,
                           sort_order: v.sort_order,
+                          notify_students: v.notify_students, // ✅ نسخ حالة إشعار الطلاب كما كانت على الفيديو الأصلي
                           chapter_id: newChap.id
                       }));
                       await supabase.from('videos').insert(videosToCopy);
@@ -161,6 +162,7 @@ export default async function handler(req, res) {
                           duration: v.duration,
                           encoding_status: v.encoding_status,
                           sort_order: v.sort_order,
+                          notify_students: v.notify_students, // ✅ نسخ حالة إشعار الطلاب كما كانت على الفيديو الأصلي
                           chapter_id: finalChapterId
                       }));
                       await supabase.from('videos').insert(vidsToCopy);
@@ -207,6 +209,7 @@ export default async function handler(req, res) {
                           duration: v.duration,
                           encoding_status: v.encoding_status,
                           sort_order: v.sort_order,
+                          notify_students: v.notify_students, // ✅ نسخ حالة إشعار الطلاب كما كانت على الفيديو الأصلي
                           chapter_id: newChap.id
                       }));
                       await supabase.from('videos').insert(videosToCopy);
