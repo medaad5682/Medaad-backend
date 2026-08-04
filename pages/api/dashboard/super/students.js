@@ -67,8 +67,15 @@ export default async function handler(req, res) {
     // B. جلب قائمة المستخدمين (للجدول الرئيسي)
     // ---------------------------------------------------------
     try {
-      const from = (page - 1) * limit;
-      const to = from + limit - 1;
+      // ✅ إصلاح: تحويل page و limit إلى أرقام صريحة
+      // القيم القادمة من req.query هي نصوص (strings)، وبدون التحويل
+      // كان "from + limit - 1" ينفذ عملية جمع نصوص (concatenation) بدل الجمع الحسابي
+      // بداية من الصفحة الثانية، مما يجعل "to" رقماً ضخماً وخاطئاً (مثلاً 3029 بدل 59)
+      // فتُرجع الاستعلامات كل الصفوف تقريباً بدل 30 صف فقط، ويتكرر نفس المشكل مع كل صفحة
+      const pageNum = parseInt(page, 10) || 1;
+      const limitNum = parseInt(limit, 10) || 30;
+      const from = (pageNum - 1) * limitNum;
+      const to = from + limitNum - 1;
 
       // بناء الاستعلام الأساسي
       // ✅ التعديل: إزالة شرط الرتبة لجلب كافة المستخدمين (مدرسين، طلاب، مشرفين، إلخ)

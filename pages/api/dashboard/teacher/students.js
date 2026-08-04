@@ -180,8 +180,13 @@ export default async (req, res) => {
             query = query.in('id', targetStudentIds);
         }
 
-        const from = (page - 1) * limit;
-        const to = from + limit - 1;
+        // ✅ إصلاح: تحويل page و limit إلى أرقام صريحة (نفس مشكلة داشبورد السوبر أدمن)
+        // بدون التحويل، "from + limit - 1" ينفذ جمع نصوص بدل جمع أرقام بداية من الصفحة الثانية
+        // مما يجعل "to" رقماً خاطئاً وضخماً فتُرجع الاستعلامات كل الصفوف تقريباً بدل 30 فقط
+        const pageNum = parseInt(page, 10) || 1;
+        const limitNum = parseInt(limit, 10) || 30;
+        const from = (pageNum - 1) * limitNum;
+        const to = from + limitNum - 1;
         query = query.order('created_at', { ascending: false }).range(from, to);
 
         const { data, count, error: fetchError } = await query;
