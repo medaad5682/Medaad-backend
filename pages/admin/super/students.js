@@ -31,6 +31,8 @@ export default function SuperStudentsPage() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [activeFilters, setActiveFilters] = useState({ courses: [], subjects: [] });
   const [tempFilters, setTempFilters] = useState({ courses: [], subjects: [] });
+  const [filterMode, setFilterMode] = useState('or'); // 'and' | 'or'
+  const [tempFilterMode, setTempFilterMode] = useState('or');
 
   // التصفح (Pagination)
   const [currentPage, setCurrentPage] = useState(1);
@@ -85,6 +87,7 @@ export default function SuperStudentsPage() {
         if (searchTerm) params.append('search', searchTerm);
         if (activeFilters.courses.length > 0) params.append('courses_filter', activeFilters.courses.join(','));
         if (activeFilters.subjects.length > 0) params.append('subjects_filter', activeFilters.subjects.join(','));
+        if (activeFilters.courses.length + activeFilters.subjects.length > 1) params.append('filter_mode', filterMode);
         
         if (params.toString()) url += `&${params.toString()}`;
         
@@ -102,7 +105,7 @@ export default function SuperStudentsPage() {
 
   useEffect(() => { 
       fetchData(); 
-  }, [currentPage, activeFilters]);
+  }, [currentPage, activeFilters, filterMode]);
 
   const handleSearchKey = (e) => {
       if (e.key === 'Enter') {
@@ -227,6 +230,7 @@ export default function SuperStudentsPage() {
   };
   const applyFilters = () => {
       setActiveFilters(tempFilters);
+      setFilterMode(tempFilterMode);
       setCurrentPage(1); 
       setShowFilterModal(false);
   };
@@ -289,7 +293,7 @@ export default function SuperStudentsPage() {
              />
           </div>
           
-          <button className={`filter-btn ${hasActiveFilters ? 'active' : ''}`} onClick={() => { setTempFilters(activeFilters); setShowFilterModal(true); }}>
+          <button className={`filter-btn ${hasActiveFilters ? 'active' : ''}`} onClick={() => { setTempFilters(activeFilters); setTempFilterMode(filterMode); setShowFilterModal(true); }}>
               🌪️ فلترة {hasActiveFilters && `(${activeFilters.courses.length + activeFilters.subjects.length})`}
           </button>
 
@@ -370,6 +374,30 @@ export default function SuperStudentsPage() {
                       <button className="close-icon" onClick={() => setShowFilterModal(false)}>✕</button>
                   </div>
                   <div className="modal-content scrollable custom-scrollbar">
+                      {/* And / Or Mode Toggle */}
+                      <div className="filter-mode-section">
+                          <span className="filter-mode-label">نوع الفلترة عند اختيار أكثر من عنصر:</span>
+                          <div className="filter-mode-toggle">
+                              <button
+                                  type="button"
+                                  className={`mode-btn ${tempFilterMode === 'or' ? 'active or-active' : ''}`}
+                                  onClick={() => setTempFilterMode('or')}
+                              >
+                                  <span className="mode-icon">∪</span>
+                                  <span className="mode-text">OR</span>
+                                  <span className="mode-hint">مشترك في أي منها</span>
+                              </button>
+                              <button
+                                  type="button"
+                                  className={`mode-btn ${tempFilterMode === 'and' ? 'active and-active' : ''}`}
+                                  onClick={() => setTempFilterMode('and')}
+                              >
+                                  <span className="mode-icon">∩</span>
+                                  <span className="mode-text">AND</span>
+                                  <span className="mode-hint">مشترك في كلها معاً</span>
+                              </button>
+                          </div>
+                      </div>
                       {allCourses.map(course => (
                           <div key={course.id} className="filter-group">
                               <div className="checkbox-row main course-row-head">
@@ -398,7 +426,7 @@ export default function SuperStudentsPage() {
                       ))}
                   </div>
                   <div className="modal-footer" style={{justifyContent: 'space-between'}}>
-                      <button className="cancel-btn danger-text" onClick={() => { setTempFilters({courses:[], subjects:[]}); setActiveFilters({courses:[], subjects:[]}); setCurrentPage(1); setShowFilterModal(false); }}>مسح الفلاتر</button>
+                      <button className="cancel-btn danger-text" onClick={() => { setTempFilters({courses:[], subjects:[]}); setActiveFilters({courses:[], subjects:[]}); setTempFilterMode('or'); setFilterMode('or'); setCurrentPage(1); setShowFilterModal(false); }}>مسح الفلاتر</button>
                       <button className="confirm-btn" onClick={applyFilters}>عرض ({tempFilters.courses.length + tempFilters.subjects.length}) ✅</button>
                   </div>
               </div>
@@ -675,6 +703,20 @@ export default function SuperStudentsPage() {
         .checkbox-row.sub:hover { border-color: var(--gold); color: var(--text-primary); }
         
         .filter-subs { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+
+        /* Filter Mode Toggle (AND / OR) */
+        .filter-mode-section { margin-bottom: 20px; padding: 16px; background: var(--bg-elevated); border-radius: 12px; border: 1px solid var(--border); }
+        .filter-mode-label { display: block; color: var(--text-muted); font-size: 0.85em; font-weight: 600; margin-bottom: 12px; }
+        .filter-mode-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .mode-btn { background: var(--bg-surface); border: 2px solid var(--border); color: var(--text-secondary); padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 700; transition: all 0.2s; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+        .mode-btn:hover { border-color: var(--gold); color: var(--text-primary); background: var(--bg-hover); }
+        .mode-icon { font-size: 1.3em; line-height: 1; }
+        .mode-text { font-size: 0.95em; font-weight: 800; }
+        .mode-hint { font-size: 0.72em; font-weight: 500; color: var(--text-muted); text-align: center; }
+        .mode-btn.active.or-active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.12); color: #60a5fa; }
+        .mode-btn.active.or-active .mode-hint { color: #93c5fd; }
+        .mode-btn.active.and-active { border-color: #a855f7; background: rgba(168, 85, 247, 0.12); color: #c084fc; }
+        .mode-btn.active.and-active .mode-hint { color: #d8b4fe; }
 
         input:disabled + span { color: var(--text-muted); text-decoration: line-through; }
 

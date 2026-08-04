@@ -58,7 +58,8 @@ export default async (req, res) => {
         search, 
         get_details_for_user,
         courses_filter,
-        subjects_filter
+        subjects_filter,
+        filter_mode = 'or'
     } = req.query;
 
     try {
@@ -121,18 +122,55 @@ export default async (req, res) => {
             // ✅ المسار الافتراضي (بدون بحث): يجلب طلاب هذا المدرس فقط لتجنب الزحام
             let targetStudentIds = await getMyStudentIds();
 
-            if (courses_filter) {
-                const filterCourseIds = courses_filter.split(',');
-                const { data: filteredByCourse } = await supabase.from('user_course_access').select('user_id').in('course_id', filterCourseIds);
-                const usersInCourses = filteredByCourse?.map(x => x.user_id) || [];
-                targetStudentIds = targetStudentIds.filter(id => usersInCourses.includes(id));
-            }
+            const hasCourseFilter = !!courses_filter;
+            const hasSubjectFilter = !!subjects_filter;
 
-            if (subjects_filter) {
-                const filterSubjectIds = subjects_filter.split(',');
-                const { data: filteredBySubject } = await supabase.from('user_subject_access').select('user_id').in('subject_id', filterSubjectIds);
-                const usersInSubjects = filteredBySubject?.map(x => x.user_id) || [];
-                targetStudentIds = targetStudentIds.filter(id => usersInSubjects.includes(id));
+            if (hasCourseFilter || hasSubjectFilter) {
+                const isAnd = filter_mode === 'and';
+
+                // جمع مجموعات المستخدمين لكل فلتر
+                let courseUserSets = [];
+                if (hasCourseFilter) {
+                    const filterCourseIds = courses_filter.split(',');
+                    if (isAnd) {
+                        for (const cid of filterCourseIds) {
+                            const { data } = await supabase.from('user_course_access').select('user_id').eq('course_id', cid);
+                            courseUserSets.push(data?.map(x => x.user_id) || []);
+                        }
+                    } else {
+                        const { data } = await supabase.from('user_course_access').select('user_id').in('course_id', filterCourseIds);
+                        courseUserSets.push(data?.map(x => x.user_id) || []);
+                    }
+                }
+
+                let subjectUserSets = [];
+                if (hasSubjectFilter) {
+                    const filterSubjectIds = subjects_filter.split(',');
+                    if (isAnd) {
+                        for (const sid of filterSubjectIds) {
+                            const { data } = await supabase.from('user_subject_access').select('user_id').eq('subject_id', sid);
+                            subjectUserSets.push(data?.map(x => x.user_id) || []);
+                        }
+                    } else {
+                        const { data } = await supabase.from('user_subject_access').select('user_id').in('subject_id', filterSubjectIds);
+                        subjectUserSets.push(data?.map(x => x.user_id) || []);
+                    }
+                }
+
+                const allSets = [...courseUserSets, ...subjectUserSets];
+
+                let filteredIds;
+                if (isAnd) {
+                    // AND: تقاطع — الطالب يجب أن يكون في كل مجموعة
+                    filteredIds = allSets.length === 0
+                        ? []
+                        : allSets.reduce((acc, set) => acc.filter(id => set.includes(id)));
+                } else {
+                    // OR: اتحاد — الطالب في أي مجموعة
+                    filteredIds = [...new Set(allSets.flat())];
+                }
+
+                targetStudentIds = targetStudentIds.filter(id => filteredIds.includes(id));
             }
 
             if (targetStudentIds.length === 0) {

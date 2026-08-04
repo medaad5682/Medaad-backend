@@ -30,6 +30,8 @@ export default function StudentsPage() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [activeFilters, setActiveFilters] = useState({ courses: [], subjects: [] });
   const [tempFilters, setTempFilters] = useState({ courses: [], subjects: [] });
+  const [filterMode, setFilterMode] = useState('or'); // 'and' | 'or'
+  const [tempFilterMode, setTempFilterMode] = useState('or');
 
   // التصفح (Pagination)
   const [currentPage, setCurrentPage] = useState(1);
@@ -81,6 +83,7 @@ export default function StudentsPage() {
         if (searchTerm) params.append('search', searchTerm);
         if (activeFilters.courses.length > 0) params.append('courses_filter', activeFilters.courses.join(','));
         if (activeFilters.subjects.length > 0) params.append('subjects_filter', activeFilters.subjects.join(','));
+        if (activeFilters.courses.length + activeFilters.subjects.length > 1) params.append('filter_mode', filterMode);
         
         if (params.toString()) url += `&${params.toString()}`;
         
@@ -101,7 +104,7 @@ export default function StudentsPage() {
       setCurrentUserId(localStorage.getItem('admin_user_id'));
       window.scrollTo(0, 0);
       fetchData(); 
-  }, [currentPage, activeFilters]);
+  }, [currentPage, activeFilters, filterMode]);
 
   const handleSearchKey = (e) => {
       if (e.key === 'Enter') {
@@ -111,7 +114,7 @@ export default function StudentsPage() {
   };
 
   // --- منطق الفلتر ---
-  const openFilterModal = () => { setTempFilters(activeFilters); setShowFilterModal(true); };
+  const openFilterModal = () => { setTempFilters(activeFilters); setTempFilterMode(filterMode); setShowFilterModal(true); };
   const toggleTempFilter = (type, id) => {
       const current = tempFilters[type];
       const updated = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
@@ -119,12 +122,15 @@ export default function StudentsPage() {
   };
   const applyFilters = () => {
       setActiveFilters(tempFilters);
+      setFilterMode(tempFilterMode);
       setCurrentPage(1); 
       setShowFilterModal(false);
   };
   const clearFilters = () => {
       setTempFilters({ courses: [], subjects: [] });
       setActiveFilters({ courses: [], subjects: [] });
+      setTempFilterMode('or');
+      setFilterMode('or');
       setCurrentPage(1);
       setShowFilterModal(false);
   };
@@ -354,6 +360,30 @@ export default function StudentsPage() {
                       <button className="close-icon" onClick={() => setShowFilterModal(false)}>{Icons.close}</button>
                   </div>
                   <div className="modal-content scrollable">
+                      {/* And / Or Mode Toggle */}
+                      <div className="filter-mode-section">
+                          <span className="filter-mode-label">نوع الفلترة عند اختيار أكثر من عنصر:</span>
+                          <div className="filter-mode-toggle">
+                              <button
+                                  type="button"
+                                  className={`mode-btn ${tempFilterMode === 'or' ? 'active or-active' : ''}`}
+                                  onClick={() => setTempFilterMode('or')}
+                              >
+                                  <span className="mode-icon">∪</span>
+                                  <span className="mode-text">OR</span>
+                                  <span className="mode-hint">مشترك في أي منها</span>
+                              </button>
+                              <button
+                                  type="button"
+                                  className={`mode-btn ${tempFilterMode === 'and' ? 'active and-active' : ''}`}
+                                  onClick={() => setTempFilterMode('and')}
+                              >
+                                  <span className="mode-icon">∩</span>
+                                  <span className="mode-text">AND</span>
+                                  <span className="mode-hint">مشترك في كلها معاً</span>
+                              </button>
+                          </div>
+                      </div>
                       {allCourses.map(course => (
                           <div key={course.id} className="filter-group">
                               <label className="checkbox-row main">
@@ -645,6 +675,20 @@ export default function StudentsPage() {
         .filter-label { display: flex; align-items: center; gap: 8px; flex: 1; }
         .icon-wrap { display: flex; align-items: center; justify-content: center; opacity: 0.8; }
         .filter-subs { display: flex; flex-direction: column; gap: 8px; }
+
+        /* Filter Mode Toggle (AND / OR) */
+        .filter-mode-section { margin-bottom: 20px; padding: 16px; background: var(--bg-elevated); border-radius: 12px; border: 1px solid var(--border); }
+        .filter-mode-label { display: block; color: var(--text-secondary); font-size: 0.85rem; font-weight: 700; margin-bottom: 12px; }
+        .filter-mode-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .mode-btn { background: var(--bg-base); border: 2px solid var(--border); color: var(--text-secondary); padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 700; transition: all 0.2s; display: flex; flex-direction: column; align-items: center; gap: 2px; font-family: inherit; }
+        .mode-btn:hover { border-color: var(--gold); color: var(--text-primary); background: var(--bg-hover); }
+        .mode-icon { font-size: 1.3em; line-height: 1; }
+        .mode-text { font-size: 0.95em; font-weight: 800; letter-spacing: 1px; }
+        .mode-hint { font-size: 0.72em; font-weight: 500; color: var(--text-muted); text-align: center; }
+        .mode-btn.active.or-active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.12); color: #60a5fa; }
+        .mode-btn.active.or-active .mode-hint { color: #93c5fd; }
+        .mode-btn.active.and-active { border-color: #a855f7; background: rgba(168, 85, 247, 0.12); color: #c084fc; }
+        .mode-btn.active.and-active .mode-hint { color: #d8b4fe; }
         
         .badge-full { font-size: 0.75rem; background: var(--gold-dim); color: var(--gold); padding: 2px 8px; border-radius: 12px; font-weight: bold; margin-right: auto; border: 1px solid var(--border-accent); }
         .badge-owned { font-size: 0.75rem; background: var(--bg-elevated); color: var(--text-muted); padding: 2px 8px; border-radius: 12px; margin-right: auto; border: 1px solid var(--border); }

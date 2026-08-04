@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   // 🟢 التعامل مع طلبات GET (جلب البيانات)
   // ==========================================================
   if (req.method === 'GET') {
-    const { page = 1, limit = 30, search, courses_filter, subjects_filter, get_details_for_user } = req.query;
+    const { page = 1, limit = 30, search, courses_filter, subjects_filter, filter_mode = 'or', get_details_for_user } = req.query;
 
     // ---------------------------------------------------------
     // A. جلب تفاصيل مستخدم محدد (للمودال - عرض الاشتراكات + قوائم المنح)
@@ -86,30 +86,63 @@ export default async function handler(req, res) {
         query = query.or(orQuery);
       }
 
-      // تطبيق فلتر الكورسات
-      if (courses_filter) {
-        const courseIds = courses_filter.split(',');
-        const { data: courseUsers } = await supabase
-          .from('user_course_access')
-          .select('user_id')
-          .in('course_id', courseIds);
-        
-        const userIds = courseUsers?.map(u => u.user_id) || [];
-        if (userIds.length > 0) query = query.in('id', userIds);
-        else query = query.eq('id', 0);
-      }
+      // تطبيق فلتر الكورسات والمواد مع دعم AND / OR
+      const hasCourseFilter = !!courses_filter;
+      const hasSubjectFilter = !!subjects_filter;
 
-      // تطبيق فلتر المواد
-      if (subjects_filter) {
-        const subjectIds = subjects_filter.split(',');
-        const { data: subjectUsers } = await supabase
-          .from('user_subject_access')
-          .select('user_id')
-          .in('subject_id', subjectIds);
+      if (hasCourseFilter || hasSubjectFilter) {
+        const isAnd = filter_mode === 'and';
 
-        const userIds = subjectUsers?.map(u => u.user_id) || [];
-        if (userIds.length > 0) query = query.in('id', userIds);
-        else query = query.eq('id', 0);
+        // جلب معرفات المستخدمين لكل كورس على حدة (AND: intersection / OR: union)
+        let courseUserSets = [];
+        if (hasCourseFilter) {
+          const courseIds = courses_filter.split(',');
+          if (isAnd) {
+            // AND: جلب كل كورس على حدة للتقاطع لاحقاً
+            for (const cid of courseIds) {
+              const { data } = await supabase.from('user_course_access').select('user_id').eq('course_id', cid);
+              courseUserSets.push(data?.map(u => u.user_id) || []);
+            }
+          } else {
+            // OR: جلب الكل دفعة واحدة
+            const { data } = await supabase.from('user_course_access').select('user_id').in('course_id', courseIds);
+            courseUserSets.push(data?.map(u => u.user_id) || []);
+          }
+        }
+
+        // جلب معرفات المستخدمين لكل مادة على حدة
+        let subjectUserSets = [];
+        if (hasSubjectFilter) {
+          const subjectIds = subjects_filter.split(',');
+          if (isAnd) {
+            for (const sid of subjectIds) {
+              const { data } = await supabase.from('user_subject_access').select('user_id').eq('subject_id', sid);
+              subjectUserSets.push(data?.map(u => u.user_id) || []);
+            }
+          } else {
+            const { data } = await supabase.from('user_subject_access').select('user_id').in('subject_id', subjectIds);
+            subjectUserSets.push(data?.map(u => u.user_id) || []);
+          }
+        }
+
+        const allSets = [...courseUserSets, ...subjectUserSets];
+
+        let finalUserIds;
+        if (isAnd) {
+          // AND: تقاطع جميع المجموعات — الطالب يجب أن يكون في كل مجموعة
+          if (allSets.length === 0) {
+            finalUserIds = [];
+          } else {
+            finalUserIds = allSets.reduce((acc, set) => acc.filter(id => set.includes(id)));
+          }
+        } else {
+          // OR: اتحاد جميع المجموعات — الطالب في أي مجموعة
+          const unionSet = new Set(allSets.flat());
+          finalUserIds = [...unionSet];
+        }
+
+        if (finalUserIds.length > 0) query = query.in('id', finalUserIds);
+        else query = query.eq('id', 0); // لا نتائج
       }
 
       const { data, count, error } = await query;

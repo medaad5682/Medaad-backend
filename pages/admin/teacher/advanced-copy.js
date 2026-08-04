@@ -40,6 +40,8 @@ export default function AdvancedCopyPage() {
   // شملنا الفيديوهات والملفات في هيكل التحديد
   const [selected, setSelected] = useState({ subjects: [], chapters: [], exams: [], videos: [], pdfs: [] });
 
+  const [notifyStudents, setNotifyStudents] = useState(false);
+
   const [toast, setToast] = useState({ show: false, msg: '', type: '' });
 
   const showToast = (msg, type = 'success') => {
@@ -251,7 +253,8 @@ export default function AdvancedCopyPage() {
             targetCourseId, 
             targetSubjectId, 
             targetChapterId, 
-            selected: finalPayload 
+            selected: finalPayload,
+            notifyStudents
         })
       });
       const data = await res.json();
@@ -382,6 +385,20 @@ export default function AdvancedCopyPage() {
                                 <div className="tag"><span><span className="icon-wrap mini">{Icons.exam}</span> امتحانات</span><strong>{selected.exams.length}</strong></div>
                                 <div className="tag"><span><span className="icon-wrap mini">{Icons.video}</span> محتوى فردي</span><strong>{selected.videos.length + selected.pdfs.length}</strong></div>
                             </div>
+
+                            <label className="notify-toggle-row" onClick={() => setNotifyStudents(v => !v)}>
+                                <div className={`notify-toggle-track ${notifyStudents ? 'on' : ''}`}>
+                                    <div className="notify-toggle-thumb" />
+                                </div>
+                                <div className="notify-toggle-text">
+                                    <span className="notify-toggle-label">إشعار الطلاب بالفيديوهات المنسوخة</span>
+                                    <span className="notify-toggle-hint">
+                                        {notifyStudents
+                                            ? 'سيصل إشعار للطلاب عند جاهزية كل فيديو منسوخ'
+                                            : 'لن يُرسل أي إشعار للطلاب (افتراضي)'}
+                                    </span>
+                                </div>
+                            </label>
 
                             <button className="btn-primary full-width execute-btn" onClick={executeCopy} disabled={copying || !sourceCourseId || !targetCourseId}>
                                 {copying ? (
@@ -613,6 +630,19 @@ export default function AdvancedCopyPage() {
         .tag:hover { border-color: var(--border-accent); background: var(--bg-hover); }
         .tag span { color: var(--text-secondary); font-size: 0.9rem; font-weight: bold; display: flex; align-items: center; gap: 6px; }
         .tag strong { color: var(--gold); font-size: 1.2rem; }
+
+        /* ================= Notify Toggle ================= */
+        .notify-toggle-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-base); cursor: pointer; margin-bottom: 14px; transition: 0.2s; user-select: none; }
+        .notify-toggle-row:hover { border-color: var(--border-accent); background: var(--bg-hover); }
+
+        .notify-toggle-track { width: 44px; min-width: 44px; height: 24px; border-radius: 12px; background: var(--border); position: relative; transition: background 0.25s; }
+        .notify-toggle-track.on { background: var(--gold); }
+        .notify-toggle-thumb { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.3); transition: transform 0.25s; }
+        .notify-toggle-track.on .notify-toggle-thumb { transform: translateX(-20px); }
+
+        .notify-toggle-text { display: flex; flex-direction: column; gap: 3px; }
+        .notify-toggle-label { color: var(--text-primary); font-weight: bold; font-size: 0.9rem; }
+        .notify-toggle-hint { color: var(--text-muted); font-size: 0.8rem; }
 
         .execute-btn { margin-top: 10px; }
         .button-spinner { width: 20px; height: 20px; border-width: 2px; border-top-color: #111009; border-left-color: rgba(17, 16, 9, 0.2); border-bottom-color: rgba(17, 16, 9, 0.2); border-right-color: rgba(17, 16, 9, 0.2); }

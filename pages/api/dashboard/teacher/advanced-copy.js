@@ -1,5 +1,60 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
+import admin from '../../../../lib/firebaseAdmin';
+
+// ===================================================================
+// 🔔 إرسال إشعار فوري لصف فيديو واحد (مخصص لحالة النسخ بعد اكتمال الفيديو)
+// نفس منطق sendVideoReadyNotification في bunny-encoding.js لكن بدون logger.
+// يُستدعى مباشرةً بعد إدراج الصف الجديد إذا كان encoding_status='ready'
+// وكان المعلم قد اختار إشعار الطلاب في واجهة النسخ.
+// ===================================================================
+async function sendImmediateVideoNotification(newVideoId, chapterId, videoTitle) {
+  try {
+    // 1. جلب subject_id وعنوان الكورس عبر الفصل
+    const { data: chapterInfo } = await supabase
+      .from('chapters')
+      .select('subject_id, subjects!inner(courses!inner(title))')
+      .eq('id', chapterId)
+      .single();
+
+    const subjectId = chapterInfo?.subject_id;
+    if (!subjectId) return; // لا يمكن إرسال الإشعار بدون subject_id
+
+    const courseTitle = chapterInfo.subjects?.courses?.title || 'تحديث جديد في الكورس';
+    const title       = courseTitle;
+    const body        = `تم رفع فيديو: ${videoTitle || 'فيديو جديد'}`;
+
+    // 2. إرسال FCM لجميع مشتركي المادة
+    await admin.messaging().send({
+      notification: { title, body },
+      topic: `subject_${subjectId}`,
+      android: { priority: 'high', notification: { sound: 'default' } },
+      apns: { payload: { aps: { sound: 'default', badge: 1, 'content-available': 1 } } },
+      data: { click_action: 'FLUTTER_NOTIFICATION_CLICK', type: 'subject', id: subjectId.toString() },
+    });
+
+    // 3. تسجيل الإشعار في جدول notifications
+    await supabase.from('notifications').insert({
+      title,
+      body,
+      target_type: 'subject',
+      target_id: subjectId.toString(),
+      sender_role: 'teacher',
+    });
+
+    // 4. إعادة تصفير علَم الإشعار على الصف نفسه (atomic claim) لمنع
+    //    الـ webhook من إعادة الإرسال لو مرّ على هذا الصف مستقبلاً
+    await supabase
+      .from('videos')
+      .update({ notify_students: false })
+      .eq('id', newVideoId)
+      .eq('notify_students', true);
+
+  } catch (err) {
+    // فشل الإشعار لا يجب أن يفشّل عملية النسخ
+    console.error('⚠️ Advanced Copy — immediate notify error:', err.message);
+  }
+}
 
 export default async function handler(req, res) {
   // 1. التحقق من صلاحية المعلم
@@ -38,7 +93,9 @@ export default async function handler(req, res) {
   // POST: خوارزمية النسخ الذكي (متوافقة 100% مع الجداول)
   // ==========================================================
   if (req.method === 'POST') {
-    const { sourceCourseId, targetCourseId, targetSubjectId, targetChapterId, selected } = req.body;
+    const { sourceCourseId, targetCourseId, targetSubjectId, targetChapterId, selected, notifyStudents = false } = req.body;
+    // ✅ القيمة الصريحة التي اختارها المعلم في واجهة النسخ (افتراضي: false)
+    const copyNotify = notifyStudents === true || notifyStudents === 'true';
 
     if (!sourceCourseId || !targetCourseId || !selected) {
       return res.status(400).json({ error: 'بيانات غير مكتملة' });
@@ -121,10 +178,18 @@ export default async function handler(req, res) {
                           duration: v.duration,
                           encoding_status: v.encoding_status,
                           sort_order: v.sort_order,
-                          notify_students: v.notify_students, // ✅ نسخ حالة إشعار الطلاب كما كانت على الفيديو الأصلي
+                          notify_students: copyNotify, // ✅ القيمة التي اختارها المعلم صراحةً في واجهة النسخ
                           chapter_id: newChap.id
                       }));
-                      await supabase.from('videos').insert(videosToCopy);
+                      const { data: insertedVids } = await supabase.from('videos').insert(videosToCopy).select('id, title, chapter_id, encoding_status');
+                      // 🔔 إشعار فوري لأي فيديو منسوخ وصالح للمشاهدة (ready) — الفيديوهات غير الجاهزة يتولى إشعارها الـ webhook
+                      if (copyNotify && insertedVids) {
+                          for (const newVid of insertedVids) {
+                              if (newVid.encoding_status === 'ready') {
+                                  await sendImmediateVideoNotification(newVid.id, newVid.chapter_id, newVid.title);
+                              }
+                          }
+                      }
                   }
 
                   if (oldChap.pdfs && oldChap.pdfs.length > 0) {
@@ -162,10 +227,18 @@ export default async function handler(req, res) {
                           duration: v.duration,
                           encoding_status: v.encoding_status,
                           sort_order: v.sort_order,
-                          notify_students: v.notify_students, // ✅ نسخ حالة إشعار الطلاب كما كانت على الفيديو الأصلي
+                          notify_students: copyNotify, // ✅ القيمة التي اختارها المعلم صراحةً في واجهة النسخ
                           chapter_id: finalChapterId
                       }));
-                      await supabase.from('videos').insert(vidsToCopy);
+                      const { data: insertedVids } = await supabase.from('videos').insert(vidsToCopy).select('id, title, chapter_id, encoding_status');
+                      // 🔔 إشعار فوري لأي فيديو منسوخ وصالح للمشاهدة (ready) — الفيديوهات غير الجاهزة يتولى إشعارها الـ webhook
+                      if (copyNotify && insertedVids) {
+                          for (const newVid of insertedVids) {
+                              if (newVid.encoding_status === 'ready') {
+                                  await sendImmediateVideoNotification(newVid.id, newVid.chapter_id, newVid.title);
+                              }
+                          }
+                      }
                   }
               }
 
@@ -209,10 +282,18 @@ export default async function handler(req, res) {
                           duration: v.duration,
                           encoding_status: v.encoding_status,
                           sort_order: v.sort_order,
-                          notify_students: v.notify_students, // ✅ نسخ حالة إشعار الطلاب كما كانت على الفيديو الأصلي
+                          notify_students: copyNotify, // ✅ القيمة التي اختارها المعلم صراحةً في واجهة النسخ
                           chapter_id: newChap.id
                       }));
-                      await supabase.from('videos').insert(videosToCopy);
+                      const { data: insertedVids } = await supabase.from('videos').insert(videosToCopy).select('id, title, chapter_id, encoding_status');
+                      // 🔔 إشعار فوري لأي فيديو منسوخ وصالح للمشاهدة (ready) — الفيديوهات غير الجاهزة يتولى إشعارها الـ webhook
+                      if (copyNotify && insertedVids) {
+                          for (const newVid of insertedVids) {
+                              if (newVid.encoding_status === 'ready') {
+                                  await sendImmediateVideoNotification(newVid.id, newVid.chapter_id, newVid.title);
+                              }
+                          }
+                      }
                   }
                   if (oldChap.pdfs && oldChap.pdfs.length > 0) {
                       const pdfsToCopy = oldChap.pdfs.map(p => ({ title: p.title, file_path: p.file_path, sort_order: p.sort_order, chapter_id: newChap.id }));
