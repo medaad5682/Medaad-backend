@@ -150,6 +150,9 @@ export default async (req, res) => {
 
     if (updateError) throw updateError;
 
+    // ✅ طباعة بيانات تسجيل الدخول الناجح مع الـ Device ID
+    console.log(`✅ [Login Success]: User ID: ${user.id} | Username: ${user.username} | Device ID: ${deviceId}`);
+
     // 8. الرد مع البيانات (شاملة رابط الصورة الكامل)
     return res.status(200).json({
       success: true,
