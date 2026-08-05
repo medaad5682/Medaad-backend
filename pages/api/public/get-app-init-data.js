@@ -5,6 +5,11 @@ import admin from '../../../lib/firebaseAdmin'; // ✅ إضافة استيراد
 import { verifyAppCheckWithWhitelist } from '../../../lib/appCheckWhitelist'; // 🆕 القائمة البيضاء
 
 export default async (req, res) => {
+  // ✅ طباعة جميع الهيدرز التي تصل من التطبيق للتحقق منها
+  console.log('=== Incoming Headers from App ===');
+  console.log(req.headers);
+  console.log('=================================');
+
   if (req.method !== 'GET') {
     return res.status(405).json({ message: 'Method Not Allowed' });
   }
@@ -36,8 +41,6 @@ export default async (req, res) => {
     return res.status(appCheckResult.status).json({ message: appCheckResult.message });
   }
   // =========================================================
-
-  
 
   let userData = null;
   let userAccess = { courses: [], subjects: [], topics: [] }; // ✅ إضافة topics هنا
