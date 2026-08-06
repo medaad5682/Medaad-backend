@@ -41,16 +41,24 @@ export default async (req, res) => {
 
         if (qErr) throw qErr;
 
-        let score = 0;
-        // ✅ الأسئلة المقالية لا تدخل في حساب الإجمالي التلقائي لأنها تحتاج تصحيحاً يدوياً
+        let score = 0; // درجة الأسئلة الاختيارية المصححة تلقائياً فقط (لا يوجد معلم ليصحح المقالي هنا)
         const mcqQuestions = (questions || []).filter(q => q.question_type !== 'essay');
-        const total = mcqQuestions.length;
+        const essayQuestions = (questions || []).filter(q => q.question_type === 'essay');
+        const mcqTotal = mcqQuestions.length;
+
+        // ✅ نطابق هيكل نتيجة "المحاولة الأولى الحقيقية" (get-results.js):
+        // total = كل الأسئلة (اختياري + مقالي)، total_points = عدد الاختياري + مجموع الدرجة العظمى للمقالي
+        // لكن هذه الأرقام هنا للعرض فقط، فدرجة المقالي لا تُحتسب أبداً لأنه لا يوجد معلم يراجعها في وضع التدريب
+        const total = mcqQuestions.length + essayQuestions.length;
+        const totalPoints = mcqQuestions.length + essayQuestions.reduce((sum, q) => sum + (parseFloat(q.max_score) || 1), 0);
+
         let correctedQuestions = [];
 
         // تصحيح الإجابات في الذاكرة وبناء مصفوفة النتائج التفصيلية
         (questions || []).forEach(q => {
           if (q.question_type === 'essay') {
-            // ✅ الأسئلة المقالية في وضع التدريب: تعرض كإجابة نصية مع الإجابة النموذجية للمراجعة الذاتية
+            // ✅ الأسئلة المقالية في وضع التدريب: تُعرض كإجابة نصية مع الإجابة النموذجية للمراجعة الذاتية فقط
+            // لا تُمنح أي درجة (earned_score = null) ولن تتم مراجعتها لاحقاً من معلم (بخلاف المحاولة الحقيقية)
             correctedQuestions.push({
               id: q.id,
               question_text: q.question_text,
@@ -59,15 +67,19 @@ export default async (req, res) => {
               max_score: q.max_score,
               model_answer: q.model_answer || null,
               user_answer: { text_answer: answers[q.id] || '' },
-              needs_manual_grading: true
+              earned_score: null,
+              needs_manual_grading: false,
+              is_self_review: true,
+              self_review_note: 'هذا سؤال مقالي، قارن إجابتك بالإجابة النموذجية أدناه لتقييم نفسك ذاتياً. لن يتم احتساب درجة له ولن يقوم معلم بمراجعته في وضع التدريب.'
             });
             return;
           }
 
           const userSelectedOptionId = answers[q.id];
           const correctOption = q.options.find(o => o.is_correct);
-          
-          if (correctOption && userSelectedOptionId && String(userSelectedOptionId) === String(correctOption.id)) {
+          const isCorrect = !!(correctOption && userSelectedOptionId && String(userSelectedOptionId) === String(correctOption.id));
+
+          if (isCorrect) {
             score++;
           }
 
@@ -79,21 +91,33 @@ export default async (req, res) => {
             question_type: 'mcq',
             options: q.options,
             correct_option_id: correctOption?.id,
-            user_answer: { selected_option_id: userSelectedOptionId }
+            user_answer: { selected_option_id: userSelectedOptionId, is_correct: isCorrect }
           });
         });
 
-        // حساب النسبة المئوية
-        const percentage = total > 0 ? Math.round((score / total) * 100) : 0;
+        // ✅ النسبة المئوية تعتمد فقط على الأسئلة الاختيارية المصححة تلقائياً (المقالي غير محتسب)
+        const percentage = mcqTotal > 0 ? Math.round((score / mcqTotal) * 100) : 0;
 
-        console.log(`${apiName} ✅ Practice Exam graded. Score: ${score}/${total}`);
+        console.log(`${apiName} ✅ Practice Exam graded. MCQ Score: ${score}/${mcqTotal} (Essay questions: ${essayQuestions.length}, self-review only)`);
 
         // إرجاع النتيجة مع التفاصيل الدقيقة مباشرة للفرونت إند دون حفظ في قاعدة البيانات
         return res.status(200).json({
           success: true,
-          score_details: { score, total, percentage }, // توحيد الهيكل مع المحاولات العادية
-          corrected_questions: correctedQuestions,    // مصفوفة الأسئلة كاملة للتحليل
-          is_practice: true
+          score_details: {
+            score,                 // درجة الاختيارى المصححة فقط (لا تشمل المقالي)
+            correct: score,
+            total,                 // إجمالي عدد كل الأسئلة (اختياري + مقالي)، كما في نتيجة المحاولة الحقيقية
+            total_points: totalPoints, // إجمالي النقاط القصوى شاملاً الدرجة العظمى للمقالي (لغرض العرض فقط)
+            mcq_total: mcqTotal,   // عدد الأسئلة الاختيارية التي بُنيت عليها النسبة المئوية فعلياً
+            percentage,
+            has_essay: essayQuestions.length > 0,
+            essay_graded: false    // ✅ توضيح صريح: المقالي غير مُصحح ولن يُصحح في وضع التدريب
+          },
+          corrected_questions: correctedQuestions, // مصفوفة الأسئلة كاملة للتحليل، شاملة الإجابة النموذجية للمقالي
+          is_practice: true,
+          message: essayQuestions.length > 0
+            ? 'تم تصحيح الأسئلة الاختيارية تلقائياً. الأسئلة المقالية لن يتم تصحيحها من قِبل معلم في وضع التدريب، قارن إجابتك بالإجابة النموذجية المتاحة لكل سؤال لتقييم نفسك ذاتياً.'
+            : undefined
         });
     }
 
