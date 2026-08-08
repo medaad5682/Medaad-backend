@@ -1,5 +1,6 @@
 import { db } from '../../../../lib/firebaseAdmin';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
+import { getCached, setCached } from '../../../../lib/simpleCache';
 
 // ============================================================================
 // 📺 إحصائيات المشاهدات لآخر 7 أيام — سوبر أدمن (Firebase — video_views)
@@ -50,6 +51,8 @@ const getDayNameFromDateStr = (dateStr) => {
 };
 
 const DAYS = 7;
+const CACHE_KEY = 'super_watch_stats';
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 دقائق — يكفي لتخفيف الضغط الكبير على Firestore
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -60,54 +63,73 @@ export default async function handler(req, res) {
   const authResult = await requireSuperAdmin(req, res);
   if (authResult.error) return;
 
+  // ✅ إذا كانت هناك نتيجة محفوظة حديثاً (أقل من 5 دقائق)، نُعيدها مباشرة
+  // بدون أي استعلام على Firestore إطلاقاً — هذا هو أكبر مصدر لتوفير الكوتا
+  // لأن هذا الإندبوينت يُستدعى في كل مرة يفتح فيها أي سوبر أدمن الداشبورد.
+  const cached = getCached(CACHE_KEY);
+  if (cached) {
+    return res.status(200).json({ ...cached, cached: true });
+  }
+
   try {
     const todayCairoStr = getCairoDateStr(new Date());
-    const localLimitDateStr = shiftDateStr(todayCairoStr, -(DAYS - 1));
-
-    // ✅ بداية النطاق الزمني (منتصف ليل اليوم الأول من الأيام السبعة بتوقيت القاهرة)
-    const rangeStartOffset = getEgyptOffset(`${localLimitDateStr}T00:00:00Z`);
-    const rangeStart = new Date(`${localLimitDateStr}T00:00:00${rangeStartOffset}`);
 
     // ================================================================
     // المشاهدات — Firebase (video_views)
     // ✅ بدون فلترة بـ teacherId إطلاقاً: إجمالي مشاهدات كل المدرسين على المنصة
+    // ✅ [تعديل] بدلاً من جلب كل المستندات (get) وعدّها يدوياً — وهو ما كان
+    // يقرأ عشرات آلاف المستندات فعلياً ويستهلك الكوتا بسرعة — نستخدم استعلام
+    // العدّ التجميعي (count aggregation) لكل يوم على حدة. هذا النوع من
+    // الاستعلامات في Firestore يُحتسب بتكلفة أقل بكثير (لا يقرأ محتوى كل
+    // مستند، فقط يعدّه عبر الفهرس) بغض النظر عن حجم البيانات المطابقة.
     // ================================================================
-    const watchSnapshot = await db.collection('video_views')
-      .where('lastViewedAt', '>=', rangeStart)
-      .get();
-
-    // --- تجميع عدد المشاهدات لكل يوم بتوقيت القاهرة ---
-    const watchesByDate = {};
-    watchSnapshot.forEach(doc => {
-      const data = doc.data();
-      const ts = data.lastViewedAt;
-      if (!ts || typeof ts.toDate !== 'function') return;
-
-      const dateStr = getCairoDateStr(ts.toDate());
-      watchesByDate[dateStr] = (watchesByDate[dateStr] || 0) + 1;
-    });
-
-    // بناء مصفوفة الأيام السبعة كاملة (حتى الأيام بدون بيانات تظهر كـ 0)
-    const chart = [];
+    const dayRanges = [];
     for (let i = DAYS - 1; i >= 0; i--) {
-      const d = shiftDateStr(todayCairoStr, -i);
-      chart.push({
-        name: d === todayCairoStr ? 'اليوم' : getDayNameFromDateStr(d),
-        date: d,
-        watches: watchesByDate[d] || 0,
+      const dayStr = shiftDateStr(todayCairoStr, -i);
+      const nextDayStr = shiftDateStr(dayStr, 1);
+
+      const startOffset = getEgyptOffset(`${dayStr}T00:00:00Z`);
+      const endOffset = getEgyptOffset(`${nextDayStr}T00:00:00Z`);
+
+      dayRanges.push({
+        dayStr,
+        start: new Date(`${dayStr}T00:00:00${startOffset}`),
+        end: new Date(`${nextDayStr}T00:00:00${endOffset}`),
       });
     }
+
+    const countSnapshots = await Promise.all(
+      dayRanges.map(({ start, end }) =>
+        db.collection('video_views')
+          .where('lastViewedAt', '>=', start)
+          .where('lastViewedAt', '<', end)
+          .count()
+          .get()
+      )
+    );
+
+    // بناء مصفوفة الأيام السبعة كاملة (حتى الأيام بدون بيانات تظهر كـ 0)
+    const chart = dayRanges.map(({ dayStr }, idx) => ({
+      name: dayStr === todayCairoStr ? 'اليوم' : getDayNameFromDateStr(dayStr),
+      date: dayStr,
+      watches: countSnapshots[idx].data().count || 0,
+    }));
 
     const todayEntry = chart[chart.length - 1];
     const todayWatches = todayEntry?.watches || 0;
     const totalWatches7Days = chart.reduce((sum, c) => sum + c.watches, 0);
 
-    return res.status(200).json({
+    const responsePayload = {
       success: true,
       today: todayWatches,
       last7DaysTotal: totalWatches7Days,
       chart,
-    });
+    };
+
+    // ✅ نخزّن النتيجة لخمس دقائق قبل إرسال أي استعلام جديد لـ Firestore
+    setCached(CACHE_KEY, responsePayload, CACHE_TTL_MS);
+
+    return res.status(200).json(responsePayload);
 
   } catch (err) {
     // ⚠️ بنطبع الـ error object كامل مش بس .message، عشان أي خطأ زي فهرس فايربيز
