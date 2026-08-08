@@ -10,6 +10,7 @@ const Icons = {
   activity: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
   pulse: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/></svg>,
   teachers: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+  eye: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
 };
 
 export default function SuperDashboard() {
@@ -92,6 +93,7 @@ export default function SuperDashboard() {
   const statCards = [
     { label: 'الطلاب المسجلين',  value: stats.totalUsers || 0,                          icon: Icons.users,    key: 'users' },
     { label: 'النشطون اليوم',    value: stats.activeUsersToday || 0,                    icon: Icons.pulse,    key: 'pulse' },
+    { label: 'مشاهدات اليوم',    value: watchLoading ? '…' : (watchData?.today || 0),   icon: Icons.eye,      key: 'eye' },
     { label: 'إجمالي الدخل',    value: `${(stats.totalRevenue || 0).toLocaleString()} ج.م`, icon: Icons.money, key: 'money' },
     { label: 'الكورسات النشطة',  value: stats.activeCourses || 0,                        icon: Icons.course,   key: 'course' },
     { label: 'عدد المدرسين',     value: stats.totalTeachers || 0,                        icon: Icons.teachers, key: 'teachers' },
