@@ -1,6 +1,7 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import admin from '../../../../lib/firebaseAdmin'; // ✅ استيراد فايربيز لإرسال الإشعارات
+import { deleteVideoViewLogs } from '../../../../lib/videoViewLogsHelper'; // ✅ حذف سجلات مشاهدة الفيديو عند حذف المحتوى
 
 // 🛠️ دالة مساعدة لاستخراج معرف الفيديو من رابط يوتيوب (محدثة لدعم جميع الروابط)
 const extractYouTubeID = (url) => {
@@ -45,11 +46,13 @@ async function deleteVideoFromBunny(bunnyVideoId) {
 }
 
 // ============================================================
-// 🎥 دالة مساعدة: جمع كل معرفات فيديوهات Bunny المرتبطة بفصل/مادة/كورس
-// قبل حذفه نهائياً — لتجنب بقاء فيديوهات يتيمة على Bunny عند حذف
-// عنصر أعلى في التسلسل الهرمي (وليس فقط عند حذف الفيديو مباشرة)
+// 🎥 دالة مساعدة: جمع كل صفوف الفيديوهات (id + bunny_video_id) المرتبطة
+// بفصل/مادة/كورس قبل حذفه نهائياً — تُستخدم لتجنب بقاء فيديوهات يتيمة
+// على Bunny (عبر bunny_video_id) وأيضاً لتنظيف سجلات المشاهدة اليتيمة
+// في Firestore (عبر id) عند حذف عنصر أعلى في التسلسل الهرمي (وليس فقط
+// عند حذف الفيديو مباشرة).
 // ============================================================
-async function getBunnyVideoIdsUnder(type, id) {
+async function getVideoRowsUnder(type, id) {
   try {
     let chapterIds = [];
 
@@ -69,8 +72,8 @@ async function getBunnyVideoIdsUnder(type, id) {
 
     if (!chapterIds.length) return [];
 
-    const { data: videos } = await supabase.from('videos').select('bunny_video_id').in('chapter_id', chapterIds);
-    return (videos || []).map(v => v.bunny_video_id).filter(Boolean);
+    const { data: videos } = await supabase.from('videos').select('id, bunny_video_id').in('chapter_id', chapterIds);
+    return videos || [];
   } catch (e) {
     console.error('⚠️ [Bunny] فشل تجميع معرفات الفيديوهات الفرعية للتنظيف:', e.message);
     return [];
@@ -489,12 +492,17 @@ export default async (req, res) => {
          const { id } = data;
          let isAuthorized = false;
          let bunnyVideoIdsToDelete = []; // 👈 كل معرفات Bunny التي يجب حذفها بعد نجاح حذف قاعدة البيانات
+         let videoIdsToDelete = []; // 👈 كل معرفات صفوف الفيديو (videos.id) لتنظيف سجلات المشاهدة في Firestore
 
          if (type === 'courses') {
             const { data: course } = await supabase.from('courses').select('teacher_id').eq('id', id).single();
             if (course && String(course.teacher_id) === String(auth.teacherId)) isAuthorized = true;
             // 👈 حذف كورس بالكامل يحذف عبره كل المواد/الفصول/الفيديوهات (Cascade) — نجمع فيديوهاتها أولاً
-            if (isAuthorized) bunnyVideoIdsToDelete = await getBunnyVideoIdsUnder('courses', id);
+            if (isAuthorized) {
+                const videoRows = await getVideoRowsUnder('courses', id);
+                bunnyVideoIdsToDelete = videoRows.map(v => v.bunny_video_id).filter(Boolean);
+                videoIdsToDelete = videoRows.map(v => v.id);
+            }
          } else if (type === 'exams') {
              const { data: exam } = await supabase.from('exams').select('subjects(courses(teacher_id))').eq('id', id).single();
              const teacherId = exam?.subjects?.courses?.teacher_id;
@@ -506,9 +514,12 @@ export default async (req, res) => {
                 if (videoRecord?.bunny_video_id) {
                     bunnyVideoIdsToDelete = [videoRecord.bunny_video_id];
                 }
+                videoIdsToDelete = [id];
             } else if (type === 'subjects' || type === 'chapters') {
-                // 👈 حذف مادة أو فصل يحذف عبره فيديوهاته (Cascade) — نجمعها أولاً لتنظيف Bunny لاحقاً
-                bunnyVideoIdsToDelete = await getBunnyVideoIdsUnder(type, id);
+                // 👈 حذف مادة أو فصل يحذف عبره فيديوهاته (Cascade) — نجمعها أولاً لتنظيف Bunny وFirestore لاحقاً
+                const videoRows = await getVideoRowsUnder(type, id);
+                bunnyVideoIdsToDelete = videoRows.map(v => v.bunny_video_id).filter(Boolean);
+                videoIdsToDelete = videoRows.map(v => v.id);
             }
 
             const targetCourseId = await getParentCourseId(type, { id }, true);
@@ -527,6 +538,12 @@ export default async (req, res) => {
              const idsSafeToDelete = await getBunnyIdsSafeToDelete(bunnyVideoIdsToDelete);
              // نرسل أوامر الحذف في الخلفية ولا ننتظر النتيجة (لكي لا نعطل الاستجابة للعميل)
              idsSafeToDelete.forEach(vid => deleteVideoFromBunny(vid));
+         }
+
+         // 👈 حذف سجلات مشاهدة الفيديو (video_views) الخاصة بالفيديوهات المحذوفة من Firestore
+         // في الخلفية دون انتظار النتيجة (لا تؤثر على استجابة العميل)
+         if (videoIdsToDelete.length > 0) {
+             deleteVideoViewLogs(videoIdsToDelete);
          }
 
          return res.status(200).json({ success: true });

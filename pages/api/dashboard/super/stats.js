@@ -89,8 +89,8 @@ export default async function handler(req, res) {
       // 3. الكورسات النشطة
       supabase.from('courses').select('*', { count: 'exact', head: true }),
 
-      // 4. إجمالي المبيعات الكلي (RPC)
-      supabase.rpc('get_total_revenue'),
+      // 4. إجمالي المبيعات الفعلية المُحصلة (RPC) — نفس دالة صفحة المالية بدلاً من السعر الافتراضي
+      supabase.rpc('get_total_actual_revenue'),
 
       // 5. أحدث المسجلين
       supabase
@@ -100,9 +100,11 @@ export default async function handler(req, res) {
         .limit(5),
 
       // 6. بيانات الرسم البياني (أرباح الفترة المحددة)
+      // ✅ نجلب actual_paid_price أيضاً لاستخدام السعر الفعلي المُحصل (وليس السعر الافتراضي فقط)
+      //    بنفس منطق صفحة المالية (finance.js) بدلاً من total_price دائماً
       supabase
         .from('subscription_requests')
-        .select('created_at, total_price')
+        .select('created_at, total_price, actual_paid_price')
         .eq('status', 'approved')
         .gte('created_at', dateLimit),
 
@@ -115,6 +117,8 @@ export default async function handler(req, res) {
     ]);
 
     // --- معالجة الأرباح الكلية ---
+    // ✅ نعتمد على المبلغ الفعلي المُحصل (actual_paid_price) وليس السعر الافتراضي فقط
+    //    بنفس منطق صفحة المالية (finance.js / get_total_actual_revenue)
     let totalRevenue = 0;
     if (!revenueRpcResult.error) {
       totalRevenue = revenueRpcResult.data || 0;
@@ -122,9 +126,14 @@ export default async function handler(req, res) {
       // حساب احتياطي في حال فشل الـ RPC
       const { data: manualData } = await supabase
         .from('subscription_requests')
-        .select('total_price')
+        .select('total_price, actual_paid_price')
         .eq('status', 'approved');
-      totalRevenue = manualData?.reduce((acc, curr) => acc + (curr.total_price || 0), 0) || 0;
+      totalRevenue = manualData?.reduce((acc, curr) => {
+        const priceToUse = (curr.actual_paid_price !== null && curr.actual_paid_price !== undefined)
+            ? curr.actual_paid_price
+            : curr.total_price;
+        return acc + (Number(priceToUse) || 0);
+      }, 0) || 0;
     }
 
     // --- معالجة بيانات الرسوم البيانية ---
@@ -143,10 +152,17 @@ export default async function handler(req, res) {
 
         // ========================================================
         // 💰 الجزء الخاص بالأرباح (تم تصحيحه ليعتمد على توقيت القاهرة بدلاً من UTC)
+        // ✅ نستخدم السعر الفعلي المُحصل (actual_paid_price) إن وُجد، وإلا نرجع
+        //    للسعر الافتراضي (total_price) — نفس منطق COALESCE المستخدم في صفحة المالية
         // ========================================================
         const dayTotal = rawChartData
             .filter(item => getCairoDateStr(new Date(item.created_at)) === targetDateStr)
-            .reduce((sum, item) => sum + (item.total_price || 0), 0);
+            .reduce((sum, item) => {
+                const priceToUse = (item.actual_paid_price !== null && item.actual_paid_price !== undefined)
+                    ? item.actual_paid_price
+                    : item.total_price;
+                return sum + (Number(priceToUse) || 0);
+            }, 0);
             
         chartDataFinal.push({ 
             name: i === 0 ? 'اليوم' : dayName,
