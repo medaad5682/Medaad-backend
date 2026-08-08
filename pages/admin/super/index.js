@@ -1,7 +1,7 @@
 import Head from 'next/head';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import SuperLayout from '../../../components/SuperLayout';
-import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { BarChart, Bar, ComposedChart, Area, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 const Icons = {
   users: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
@@ -20,6 +20,10 @@ export default function SuperDashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [isDark, setIsDark] = useState(true);
+
+  // ── بيانات المشاهدات (كل المدرسين — Firebase) ──
+  const [watchData, setWatchData] = useState(null);
+  const [watchLoading, setWatchLoading] = useState(true);
 
   useEffect(() => {
     const saved = localStorage.getItem('medaad_theme');
@@ -42,15 +46,48 @@ export default function SuperDashboard() {
       finally { setLoading(false); }
     };
     fetchStats();
+
+    // ✅ إحصائيات المشاهدات لكل المنصة (بدون تقييد بمدرس معين)
+    const fetchWatchStats = async () => {
+      try {
+        const res = await fetch('/api/dashboard/super/watch-stats');
+        if (res.ok) { const data = await res.json(); setWatchData(data); }
+        else console.error('فشل جلب إحصائيات المشاهدات:', res.status);
+      } catch (error) { console.error('Network error (watch-stats)', error); }
+      finally { setWatchLoading(false); }
+    };
+    fetchWatchStats();
   }, []);
 
   const goldColor   = isDark ? '#c9a84c' : '#b8903a';
   const goldLight   = isDark ? '#e8c96a' : '#d4a843';
+  const usersColor  = isDark ? '#38bdf8' : '#0ea5e9';
   const chartGrid   = isDark ? '#2c2818' : '#ddd4a8';
   const chartAxis   = isDark ? '#a89f7a' : '#9e8850';
   const tooltipBg   = isDark ? '#1a1710' : '#ffffff';
   const tooltipBdr  = isDark ? '#3a3420' : '#ddd4a8';
   const areaColor   = isDark ? '#c9a84c' : '#b8903a';
+
+  // ✅ دمج مخطط المشاهدات (كل المنصة) مع مخطط النشاط في مصفوفة واحدة
+  // بنفس الأيام السبعة، مربوطة بمفتاح date (نفس منطق لوحة المدرس)
+  const watchChart = watchData?.chart || [];
+  const activeUsersChart = stats.activeUsersChartData || [];
+  const combinedChart = useMemo(() => {
+    const map = new Map();
+    watchChart.forEach(item => {
+      map.set(item.date, { name: item.name, date: item.date, watches: item.watches || 0, users: 0 });
+    });
+    activeUsersChart.forEach(item => {
+      const existing = map.get(item.date);
+      if (existing) {
+        existing.users = item.users || 0;
+      } else {
+        map.set(item.date, { name: item.name, date: item.date, watches: 0, users: item.users || 0 });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [watchChart, activeUsersChart]);
+  const activityChartLoading = loading || watchLoading;
 
   const statCards = [
     { label: 'الطلاب المسجلين',  value: stats.totalUsers || 0,                          icon: Icons.users,    key: 'users' },
@@ -124,25 +161,42 @@ export default function SuperDashboard() {
 
               <div className="chart-card">
                 <div className="chart-card-header">
-                  <h3>🚀 نشاط المستخدمين</h3>
+                  <h3>🚀 المشاهدات ونشاط المستخدمين</h3>
                   <span className="chart-sub">آخر 7 أيام</span>
                 </div>
                 <div className="chart-wrap">
-                  {stats.activeUsersChartData?.length > 0 ? (
+                  {activityChartLoading ? (
+                    <div className="empty-chart">جاري تحميل البيانات...</div>
+                  ) : combinedChart.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={stats.activeUsersChartData}>
+                      <ComposedChart data={combinedChart}>
                         <defs>
-                          <linearGradient id="goldGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%"  stopColor={areaColor} stopOpacity={0.35} />
-                            <stop offset="95%" stopColor={areaColor} stopOpacity={0} />
+                          <linearGradient id="watchGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%"  stopColor={goldColor} stopOpacity={0.35} />
+                            <stop offset="95%" stopColor={goldColor} stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="usersGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%"  stopColor={usersColor} stopOpacity={0.3} />
+                            <stop offset="95%" stopColor={usersColor} stopOpacity={0} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
                         <XAxis dataKey="name" stroke={chartAxis} tick={{ fontSize: 11 }} />
-                        <YAxis stroke={chartAxis} tick={{ fontSize: 11 }} />
-                        <Tooltip contentStyle={{ backgroundColor: tooltipBg, border: `1px solid ${tooltipBdr}`, borderRadius: '10px', color: isDark ? '#f5f0e0' : '#1a1508' }} />
-                        <Area type="monotone" dataKey="users" stroke={goldColor} strokeWidth={3} fillOpacity={1} fill="url(#goldGrad)" />
-                      </AreaChart>
+                        <YAxis stroke={chartAxis} tick={{ fontSize: 11 }} allowDecimals={false} />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: tooltipBg, border: `1px solid ${tooltipBdr}`, borderRadius: '10px', color: isDark ? '#f5f0e0' : '#1a1508' }}
+                          formatter={(value, name) => [
+                            name === 'watches' ? `${value.toLocaleString()} مشاهدة` : `${value.toLocaleString()} مستخدم`,
+                            name === 'watches' ? 'المشاهدات' : 'النشطون'
+                          ]}
+                        />
+                        <Legend
+                          formatter={(value) => value === 'watches' ? 'المشاهدات' : 'النشطون'}
+                          wrapperStyle={{ fontSize: '12px', color: chartAxis }}
+                        />
+                        <Area type="monotone" dataKey="watches" name="watches" stroke={goldColor} strokeWidth={3} fillOpacity={1} fill="url(#watchGrad)" />
+                        <Area type="monotone" dataKey="users" name="users" stroke={usersColor} strokeWidth={3} fillOpacity={1} fill="url(#usersGrad)" />
+                      </ComposedChart>
                     </ResponsiveContainer>
                   ) : (
                     <div className="empty-chart">لا توجد بيانات نشاط متاحة</div>

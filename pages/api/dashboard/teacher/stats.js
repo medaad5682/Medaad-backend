@@ -1,6 +1,45 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 
+// ============================================================
+// ✅ أدوات التوقيت الخاصة بمصر (نفس المنطق المستخدم في super/stats.js)
+// ============================================================
+const getEgyptOffset = (dateInput) => {
+  try {
+    const date = new Date(dateInput);
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Cairo', timeZoneName: 'shortOffset' });
+    const parts = fmt.formatToParts(date);
+    const offsetString = parts.find(p => p.type === 'timeZoneName').value;
+    const hours = parseInt(offsetString.replace(/[^\d+-]/g, '')) || 2;
+    const sign = hours >= 0 ? '+' : '-';
+    const paddedHours = Math.abs(hours).toString().padStart(2, '0');
+    return `${sign}${paddedHours}:00`;
+  } catch (e) {
+    return '+02:00';
+  }
+};
+
+const cairoDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+const getCairoDateStr = (date) => cairoDateFormatter.format(date);
+
+const shiftDateStr = (dateStr, days) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+};
+
+const daysMap = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+const getDayNameFromDateStr = (dateStr) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return daysMap[new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay()];
+};
+
 export default async (req, res) => {
   // 1. التحقق من الصلاحية
   const { user, error } = await requireTeacherOrAdmin(req, res);
@@ -10,11 +49,20 @@ export default async (req, res) => {
 
   try {
     // =========================================================
+    // ✅ تحديث إحصائيات النشاط اليومي الخاصة بطلاب هذا المدرس فقط
+    // (تُنشئ صف اليوم تلقائياً إذا لم يكن موجوداً، وتحدّثه إذا كان موجوداً)
+    // =========================================================
+    await supabase.rpc('update_daily_teacher_user_stats', { teacher_id_arg: teacherId });
+
+    const todayCairoStr = getCairoDateStr(new Date());
+    const localLimitDateStr = shiftDateStr(todayCairoStr, -7);
+
+    // =========================================================
     // 2. التنفيذ المتوازي (Parallel Execution)
     // نجلب الكورسات، الطلبات المعلقة، والأرباح في وقت واحد
     // =========================================================
     
-    const [coursesResult, pendingResult, revenueResult] = await Promise.all([
+    const [coursesResult, pendingResult, revenueResult, dailyStatsResult] = await Promise.all([
       // أ. جلب الكورسات
       supabase
         .from('courses')
@@ -34,7 +82,15 @@ export default async (req, res) => {
           teacher_id_arg: teacherId,
           start_date: null,
           end_date: null
-      })
+      }),
+
+      // د. ✅ إحصائيات النشاط اليومي لطلاب هذا المدرس (آخر 7 أيام)
+      supabase
+        .from('daily_teacher_user_stats')
+        .select('record_date, active_users_today')
+        .eq('teacher_id', teacherId)
+        .gte('record_date', localLimitDateStr)
+        .order('record_date', { ascending: false })
     ]);
 
     // التحقق من الأخطاء في البيانات الأساسية
@@ -145,18 +201,39 @@ export default async (req, res) => {
       ...subjectAccess.map(a => a.user_id)
     ]);
 
+    // =========================================================
+    // ✅ بناء مصفوفة رسم النشاط اليومي (آخر 7 أيام) لطلاب هذا المدرس
+    // =========================================================
+    const rawDailyStats = dailyStatsResult.data || [];
+    const activeUsersChartData = [];
+
+    for (let i = 6; i >= 0; i--) {
+      const targetDateStr = shiftDateStr(todayCairoStr, -i);
+      const dayName = getDayNameFromDateStr(targetDateStr);
+      const foundStat = rawDailyStats.find(s => s.record_date === targetDateStr);
+      activeUsersChartData.push({
+        name: i === 0 ? 'اليوم' : dayName,
+        date: targetDateStr,
+        users: foundStat ? foundStat.active_users_today : 0
+      });
+    }
+
+    const activeUsersToday = activeUsersChartData[6]?.users || 0;
+
     return res.status(200).json({
       success: true,
       summary: {
         students: allStudentIds.size, 
         earnings: totalEarnings, // تم استخراجها بنجاح
         courses: courses.length,
-        pending: pendingRequests
+        pending: pendingRequests,
+        activeUsersToday // ✅ عدد الطلاب النشطين اليوم
       },
       details: {
           courses: coursesStats,
           subjects: subjectsStats
-      }
+      },
+      activeUsersChartData // ✅ بيانات رسم النشاط لآخر 7 أيام
     });
 
   } catch (err) {

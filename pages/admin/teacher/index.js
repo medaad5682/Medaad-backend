@@ -1,5 +1,5 @@
 import TeacherLayout from '../../../components/TeacherLayout';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { ComposedChart, Area, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -10,7 +10,8 @@ const Icons = {
   students: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>,
   courses: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>,
   earnings: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>,
-  eye: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+  eye: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>,
+  pulse: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"></path><line x1="16" y1="8" x2="2" y2="22"></line><line x1="17.5" y1="15" x2="9" y2="15"></line></svg>
 };
 
 export default function TeacherDashboard() {
@@ -90,8 +91,33 @@ export default function TeacherDashboard() {
   const todayWatches = watchData?.today || 0;
   const watchChart = watchData?.chart || [];
 
+  // 4. ✅ بيانات الطلاب النشطين اليوم (خاصة بطلاب هذا المدرس فقط)
+  const activeUsersToday = stats.activeUsersToday || 0;
+  const activeUsersChart = data?.activeUsersChartData || [];
+
+  // 5. ✅ دمج مخطط المشاهدات ومخطط النشاط في مصفوفة واحدة (نفس الأيام السبعة
+  //    مبنية بنفس منطق توقيت القاهرة في الـ API، فبنربطهم بمفتاح date)
+  const combinedChart = useMemo(() => {
+    const map = new Map();
+    watchChart.forEach(item => {
+      map.set(item.date, { name: item.name, date: item.date, watches: item.watches || 0, users: 0 });
+    });
+    activeUsersChart.forEach(item => {
+      const existing = map.get(item.date);
+      if (existing) {
+        existing.users = item.users || 0;
+      } else {
+        map.set(item.date, { name: item.name, date: item.date, watches: 0, users: item.users || 0 });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [watchChart, activeUsersChart]);
+
+  const chartLoading = watchLoading || loading;
+
   // ألوان الرسم البياني حسب الوضع الليلي/النهاري
   const goldColor  = isDark ? '#c9a84c' : '#b8903a';
+  const usersColor = isDark ? '#38bdf8' : '#0ea5e9';
   const chartGrid  = isDark ? '#2c2818' : '#ddd4a8';
   const chartAxis  = isDark ? '#a89f7a' : '#9e8850';
   const tooltipBg  = isDark ? '#1a1710' : '#ffffff';
@@ -178,25 +204,40 @@ export default function TeacherDashboard() {
                 <div className="stat-glow" />
               </div>
 
+              {/* بطاقة الطلاب النشطين اليوم */}
+              <div className="stat-card">
+                <div className="stat-icon pulse-icon">{Icons.pulse}</div>
+                <div className="stat-info">
+                  <div className="stat-label">الطلاب النشطون اليوم</div>
+                  <div className="stat-value">{loading ? '…' : activeUsersToday.toLocaleString()}</div>
+                  <div className="stat-desc">من إجمالي طلابك</div>
+                </div>
+                <div className="stat-glow" />
+              </div>
+
             </div>
 
-            {/* ── مخطط المشاهدات لآخر 7 أيام ── */}
+            {/* ── مخطط المشاهدات ونشاط الطلاب لآخر 7 أيام (مخطط واحد مدمج) ── */}
             <div className="panel chart-panel">
               <div className="panel-head">
-                <h3>👁️ المشاهدات لآخر 7 أيام</h3>
+                <h3>👁️ المشاهدات ونشاط الطلاب لآخر 7 أيام</h3>
               </div>
               <div className="chart-body">
-                {watchLoading ? (
-                  <div className="chart-loading">جاري تحميل بيانات المشاهدات...</div>
-                ) : watchChart.length === 0 ? (
-                  <div className="chart-loading">لا توجد بيانات مشاهدات بعد</div>
+                {chartLoading ? (
+                  <div className="chart-loading">جاري تحميل البيانات...</div>
+                ) : combinedChart.length === 0 ? (
+                  <div className="chart-loading">لا توجد بيانات كافية بعد</div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={watchChart} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                    <ComposedChart data={combinedChart} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                       <defs>
                         <linearGradient id="watchGradient" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor={goldColor} stopOpacity={0.35} />
                           <stop offset="95%" stopColor={goldColor} stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="usersGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={usersColor} stopOpacity={0.3} />
+                          <stop offset="95%" stopColor={usersColor} stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
@@ -205,13 +246,17 @@ export default function TeacherDashboard() {
                       <Tooltip
                         contentStyle={{ backgroundColor: tooltipBg, border: `1px solid ${tooltipBdr}`, borderRadius: '10px', color: isDark ? '#f5f0e0' : '#1a1508' }}
                         cursor={{ stroke: goldColor, strokeWidth: 1, strokeDasharray: '4 4' }}
-                        formatter={(value) => [`${value.toLocaleString()} مشاهدة`, 'المشاهدات']}
+                        formatter={(value, name) => [
+                          name === 'watches' ? `${value.toLocaleString()} مشاهدة` : `${value.toLocaleString()} طالب`,
+                          name === 'watches' ? 'المشاهدات' : 'الطلاب النشطون'
+                        ]}
                       />
                       <Legend
-                        formatter={() => 'المشاهدات'}
-                        wrapperStyle={{ fontSize: '0.8rem' }}
+                        formatter={(value) => value === 'watches' ? 'المشاهدات' : 'الطلاب النشطون'}
+                        wrapperStyle={{ fontSize: '12px', color: chartAxis }}
                       />
                       <Area type="monotone" dataKey="watches" name="watches" stroke={goldColor} strokeWidth={2.5} fill="url(#watchGradient)" />
+                      <Area type="monotone" dataKey="users" name="users" stroke={usersColor} strokeWidth={2.5} fill="url(#usersGradient)" />
                     </ComposedChart>
                   </ResponsiveContainer>
                 )}
@@ -327,6 +372,7 @@ export default function TeacherDashboard() {
         .stat-icon.success-icon { color: #4ade80; border-color: rgba(74,222,128,0.4); background: rgba(74,222,128,0.1); }
         .stat-icon.highlight-icon { color: #f472b6; border-color: rgba(244,114,182,0.4); background: rgba(244,114,182,0.1); }
         .stat-icon.watch-icon { color: #38bdf8; border-color: rgba(56,189,248,0.4); background: rgba(56,189,248,0.1); }
+        .stat-icon.pulse-icon { color: #a78bfa; border-color: rgba(167,139,250,0.4); background: rgba(167,139,250,0.1); }
 
         .stat-info { flex: 1; min-width: 0; }
         .stat-label { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 4px; font-weight: 700; }
