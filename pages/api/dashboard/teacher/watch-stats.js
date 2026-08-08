@@ -1,27 +1,20 @@
 import { db } from '../../../../lib/firebaseAdmin';
-import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 
 // ============================================================================
-// 📺 إحصائيات المشاهدات + 👥 المستخدمين النشطين لآخر 7 أيام
+// 📺 إحصائيات المشاهدات لآخر 7 أيام (Firebase — video_views)
+// (نفس المصدر المستخدم في get-video-views.js)
 // ============================================================================
-// 1) المشاهدات: تعتمد على مجموعة Firebase الموجودة بالفعل: video_views
-//    (نفس المصدر المستخدم في get-video-views.js)
-// 2) النشطون: يعتمدون على عمود last_active_at في جدول users بـ Supabase
-//    (يُحدَّث تلقائياً من get-app-init-data.js في كل مرة يفتح فيها الطالب التطبيق)
-//    ونقتصر على الطلاب المرتبطين فعلياً بكورسات/مواد هذا المدرس فقط
-//    (نفس منطق حساب "إجمالي الطلاب" الموجود في stats.js)
-// ============================================================================
-// ⚠️ ملاحظة مهمة عن طبيعة البيانات (تنطبق على المصدرين):
-// كلاهما يخزّن "آخر" وقت فقط (آخر مشاهدة / آخر ظهور) وليس سجلاً كاملاً لكل
-// حدث. فإذا شاهد طالب فيديو أو فتح التطبيق أكثر من مرة خلال الأسبوع، يظهر
+// ⚠️ ملاحظة: video_views بتخزّن "آخر" مشاهدة فقط لكل زوج (فيديو، طالب) وليس
+// سجلاً كاملاً لكل حدث. فإذا شاهد طالب فيديو أكثر من مرة خلال الأسبوع، يظهر
 // فقط في اليوم الأحدث من بين هذه المرات — وهو أقرب تقدير ممكن بدون تغيير
-// طريقة التسجيل الحالية في كلا المصدرين.
+// طريقة التسجيل الحالية.
 // ============================================================================
 
-const getEgyptOffset = (dateInput) => {
+const getEgyptOffset = (utcDateInput) => {
   try {
-    const date = new Date(dateInput);
+    // ⚠️ utcDateInput هنا لازم يكون UTC صريح (منتهي بـ Z) قبل أي new Date().
+    const date = new Date(utcDateInput);
     const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Cairo', timeZoneName: 'shortOffset' });
     const parts = fmt.formatToParts(date);
     const offsetString = parts.find(p => p.type === 'timeZoneName').value;
@@ -57,57 +50,6 @@ const getDayNameFromDateStr = (dateStr) => {
 
 const DAYS = 7;
 
-// ✅ جلب معرّفات الطلاب المرتبطين فعلياً بهذا المدرس (نفس منطق stats.js)
-async function getTeacherStudentIds(teacherId) {
-  const { data: courses, error: coursesErr } = await supabase
-    .from('courses')
-    .select('id')
-    .eq('teacher_id', teacherId);
-
-  if (coursesErr) throw coursesErr;
-
-  const courseIds = (courses || []).map(c => c.id);
-  let subjectIds = [];
-
-  if (courseIds.length > 0) {
-    const { data: subjects, error: subjectsErr } = await supabase
-      .from('subjects')
-      .select('id')
-      .in('course_id', courseIds);
-
-    if (subjectsErr) throw subjectsErr;
-    subjectIds = (subjects || []).map(s => s.id);
-  }
-
-  const [courseAccessResult, subjectAccessResult] = await Promise.all([
-    courseIds.length > 0
-      ? supabase
-          .from('user_course_access')
-          .select('user_id, users!inner(role)')
-          .in('course_id', courseIds)
-          .eq('users.role', 'student')
-      : Promise.resolve({ data: [], error: null }),
-
-    subjectIds.length > 0
-      ? supabase
-          .from('user_subject_access')
-          .select('user_id, users!inner(role)')
-          .in('subject_id', subjectIds)
-          .eq('users.role', 'student')
-      : Promise.resolve({ data: [], error: null }),
-  ]);
-
-  if (courseAccessResult.error) throw courseAccessResult.error;
-  if (subjectAccessResult.error) throw subjectAccessResult.error;
-
-  const studentIds = new Set([
-    ...(courseAccessResult.data || []).map(a => a.user_id),
-    ...(subjectAccessResult.data || []).map(a => a.user_id),
-  ]);
-
-  return [...studentIds];
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ success: false, message: 'Method Not Allowed' });
@@ -126,11 +68,11 @@ export default async function handler(req, res) {
     const localLimitDateStr = shiftDateStr(todayCairoStr, -(DAYS - 1));
 
     // ✅ بداية النطاق الزمني (منتصف ليل اليوم الأول من الأيام السبعة بتوقيت القاهرة)
-    const rangeStartOffset = getEgyptOffset(`${localLimitDateStr}T00:00:00`);
+    const rangeStartOffset = getEgyptOffset(`${localLimitDateStr}T00:00:00Z`);
     const rangeStart = new Date(`${localLimitDateStr}T00:00:00${rangeStartOffset}`);
 
     // ================================================================
-    // 1) المشاهدات — Firebase (video_views)
+    // المشاهدات — Firebase (video_views)
     // ✅ نفلتر دائماً حسب teacherId طالما الحساب مرتبط بملف مدرس — حتى لو كان
     // نفس الحساب يحمل صلاحية super_admin (is_admin = true على حساب مدرس).
     // فقط السوبر أدمن الذي لا يملك teacher_profile_id إطلاقاً يرى بيانات كل المدرسين.
@@ -140,12 +82,7 @@ export default async function handler(req, res) {
       watchQuery = watchQuery.where('teacherId', '==', teacherId);
     }
 
-    // ================================================================
-    // 2) النشطون — Supabase (users.last_active_at) مقيّد بطلاب هذا المدرس فقط
-    // ================================================================
-    const studentIdsPromise = teacherId ? getTeacherStudentIds(teacherId) : Promise.resolve(null);
-
-    const [watchSnapshot, studentIds] = await Promise.all([watchQuery.get(), studentIdsPromise]);
+    const watchSnapshot = await watchQuery.get();
 
     // --- تجميع عدد المشاهدات لكل يوم بتوقيت القاهرة ---
     const watchesByDate = {};
@@ -158,29 +95,6 @@ export default async function handler(req, res) {
       watchesByDate[dateStr] = (watchesByDate[dateStr] || 0) + 1;
     });
 
-    // --- تجميع عدد المستخدمين النشطين لكل يوم بتوقيت القاهرة ---
-    const activeByDate = {};
-    if (studentIds === null || studentIds.length > 0) {
-      let activityQuery = supabase
-        .from('users')
-        .select('id, last_active_at')
-        .gte('last_active_at', rangeStart.toISOString());
-
-      // السوبر أدمن (بدون teacherId) يرى كل الطلاب النشطين على المنصة
-      if (studentIds !== null) {
-        activityQuery = activityQuery.in('id', studentIds);
-      }
-
-      const { data: activeUsers, error: activeErr } = await activityQuery;
-      if (activeErr) throw activeErr;
-
-      (activeUsers || []).forEach(u => {
-        if (!u.last_active_at) return;
-        const dateStr = getCairoDateStr(new Date(u.last_active_at));
-        activeByDate[dateStr] = (activeByDate[dateStr] || 0) + 1;
-      });
-    }
-
     // بناء مصفوفة الأيام السبعة كاملة (حتى الأيام بدون بيانات تظهر كـ 0)
     const chart = [];
     for (let i = DAYS - 1; i >= 0; i--) {
@@ -189,27 +103,24 @@ export default async function handler(req, res) {
         name: d === todayCairoStr ? 'اليوم' : getDayNameFromDateStr(d),
         date: d,
         watches: watchesByDate[d] || 0,
-        activeUsers: activeByDate[d] || 0,
       });
     }
 
     const todayEntry = chart[chart.length - 1];
     const todayWatches = todayEntry?.watches || 0;
-    const todayActiveUsers = todayEntry?.activeUsers || 0;
     const totalWatches7Days = chart.reduce((sum, c) => sum + c.watches, 0);
 
     return res.status(200).json({
       success: true,
       today: todayWatches,
-      todayActiveUsers,
       last7DaysTotal: totalWatches7Days,
       chart,
     });
 
   } catch (err) {
-    console.error('❌ Watch Stats Error:', err.message);
-    // ⚠️ لو ظهر خطأ يتعلق بوجود فهرس مركب مطلوب (composite index)، فايربيز نفسه
-    // يرسل رابطاً جاهزاً لإنشائه تلقائياً من رسالة الخطأ في اللوجات.
+    // ⚠️ بنطبع الـ error object كامل مش بس .message، عشان أي خطأ زي فهرس فايربيز
+    // مركب مفقود (composite index) بيبعت رابط إنشاء جاهز جوه رسالة الخطأ نفسها.
+    console.error('❌ Watch Stats Error:', err);
     return res.status(500).json({ success: false, error: 'تعذر جلب إحصائيات المشاهدات' });
   }
 }
