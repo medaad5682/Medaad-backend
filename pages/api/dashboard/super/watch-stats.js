@@ -1,6 +1,5 @@
 import { db } from '../../../../lib/firebaseAdmin';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
-import { getCached, setCached } from '../../../../lib/simpleCache';
 
 // ============================================================================
 // 📺 إحصائيات المشاهدات لآخر 7 أيام — سوبر أدمن (Firebase — video_views)
@@ -51,8 +50,6 @@ const getDayNameFromDateStr = (dateStr) => {
 };
 
 const DAYS = 7;
-const CACHE_KEY = 'super_watch_stats';
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 دقائق — يكفي لتخفيف الضغط الكبير على Firestore
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -62,14 +59,6 @@ export default async function handler(req, res) {
   // ✅ سوبر أدمن فقط
   const authResult = await requireSuperAdmin(req, res);
   if (authResult.error) return;
-
-  // ✅ إذا كانت هناك نتيجة محفوظة حديثاً (أقل من 5 دقائق)، نُعيدها مباشرة
-  // بدون أي استعلام على Firestore إطلاقاً — هذا هو أكبر مصدر لتوفير الكوتا
-  // لأن هذا الإندبوينت يُستدعى في كل مرة يفتح فيها أي سوبر أدمن الداشبورد.
-  const cached = getCached(CACHE_KEY);
-  if (cached) {
-    return res.status(200).json({ ...cached, cached: true });
-  }
 
   try {
     const todayCairoStr = getCairoDateStr(new Date());
@@ -125,9 +114,6 @@ export default async function handler(req, res) {
       last7DaysTotal: totalWatches7Days,
       chart,
     };
-
-    // ✅ نخزّن النتيجة لخمس دقائق قبل إرسال أي استعلام جديد لـ Firestore
-    setCached(CACHE_KEY, responsePayload, CACHE_TTL_MS);
 
     return res.status(200).json(responsePayload);
 

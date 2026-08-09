@@ -1,6 +1,5 @@
 import { db } from '../../../../lib/firebaseAdmin';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
-import { getCached, setCached } from '../../../../lib/simpleCache';
 
 // ============================================================================
 // 📺 إحصائيات المشاهدات لآخر 7 أيام (Firebase — video_views)
@@ -64,14 +63,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'لم يتم العثور على بروفايل المدرس' });
   }
 
-  // ✅ كاش لكل مدرس على حدة (أو كاش عام لو سوبر أدمن بدون بروفايل مدرس) لمدة 5 دقائق
-  const cacheKey = teacherId ? `teacher_watch_stats_${teacherId}` : 'teacher_watch_stats_all';
-  const CACHE_TTL_MS = 5 * 60 * 1000;
-  const cached = getCached(cacheKey);
-  if (cached) {
-    return res.status(200).json({ ...cached, cached: true });
-  }
-
   try {
     const todayCairoStr = getCairoDateStr(new Date());
 
@@ -127,8 +118,6 @@ export default async function handler(req, res) {
       last7DaysTotal: totalWatches7Days,
       chart,
     };
-
-    setCached(cacheKey, responsePayload, CACHE_TTL_MS);
 
     return res.status(200).json(responsePayload);
 
