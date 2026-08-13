@@ -40,24 +40,26 @@ export default async function handler(req, res) {
         let label = (payload?.label || '').trim() || null;
 
         if (!rawInput) {
-          return res.status(400).json({ error: 'يجب إدخال معرّف المستخدم (user_id) أو اسم المستخدم أو رقم الهاتف' });
+          return res.status(400).json({ error: 'يجب إدخال معرّف المستخدم (user_id) أو اسم المستخدم أو رقم الهاتف أو البريد الإلكتروني' });
         }
 
         // 🆕 =========================================================
         // 🆕 استخراج user_id تلقائياً من المُدخل مهما كانت صيغته:
         // 🆕 - إذا كان رقماً صحيحاً: نتحقق أولاً إن كان user_id، وإلا نجرّبه كرقم هاتف.
-        // 🆕 - إذا كان نصاً: نبحث عنه كاسم مستخدم في جدول users.
+        // 🆕 - إذا كان يحتوي على @: نبحث عنه كبريد إلكتروني في جدول users.
+        // 🆕 - غير ذلك (نص): نبحث عنه كاسم مستخدم في جدول users.
         // 🆕 في كل الحالات نستخرج id الحقيقي تلقائياً ونخزّنه بدل القيمة المُدخلة.
         // 🆕 =========================================================
         let resolvedUserId = null;
         let matchedUser = null;
 
         const isNumericId = /^\d+$/.test(rawInput);
+        const isEmail = rawInput.includes('@');
 
         if (isNumericId) {
           const { data: byId } = await supabase
             .from('users')
-            .select('id, username, phone')
+            .select('id, username, phone, email')
             .eq('id', rawInput)
             .maybeSingle();
 
@@ -66,15 +68,22 @@ export default async function handler(req, res) {
           } else {
             const { data: byPhone } = await supabase
               .from('users')
-              .select('id, username, phone')
+              .select('id, username, phone, email')
               .eq('phone', rawInput)
               .maybeSingle();
             matchedUser = byPhone || null;
           }
+        } else if (isEmail) {
+          const { data: byEmail } = await supabase
+            .from('users')
+            .select('id, username, phone, email')
+            .eq('email', rawInput.trim().toLowerCase())
+            .maybeSingle();
+          matchedUser = byEmail || null;
         } else {
           const { data: byUsername } = await supabase
             .from('users')
-            .select('id, username, phone')
+            .select('id, username, phone, email')
             .eq('username', rawInput)
             .maybeSingle();
           matchedUser = byUsername || null;

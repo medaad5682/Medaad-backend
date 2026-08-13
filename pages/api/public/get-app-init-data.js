@@ -5,11 +5,7 @@ import admin from '../../../lib/firebaseAdmin'; // ✅ إضافة استيراد
 import { verifyAppCheckWithWhitelist } from '../../../lib/appCheckWhitelist'; // 🆕 القائمة البيضاء
 
 export default async (req, res) => {
-  // ✅ طباعة جميع الهيدرز التي تصل من التطبيق للتحقق منها
-  console.log('=== Incoming Headers from App ===');
-  console.log(req.headers);
-  console.log('=================================');
-
+  
   if (req.method !== 'GET') {
     return res.status(405).json({ message: 'Method Not Allowed' });
   }
@@ -69,7 +65,7 @@ export default async (req, res) => {
        // ✅ جلب الصلاحية ورقم بروفايل المعلم
        const { data: user } = await supabase
           .from('users')
-          .select('id, first_name, username, phone, is_blocked, jwt_token, role, teacher_profile_id')
+          .select('id, first_name, username, phone, email, is_blocked, jwt_token, role, teacher_profile_id')
           .eq('id', userId)
           .single();
 
@@ -120,6 +116,7 @@ export default async (req, res) => {
               first_name: user.first_name,
               username: user.username,
               phone: user.phone,
+              email: user.email,
               role: appRole, 
               teacher_profile_id: user.teacher_profile_id,
               profile_image: profileImage // ✅ تم إضافة الصورة هنا

@@ -93,11 +93,11 @@ export default function AppCheckWhitelistManager() {
           <div className="panel-body">
             <form onSubmit={handleAdd} className="add-form">
               <div className="form-group">
-                <label>اسم المستخدم أو رقم الهاتف أو user_id (سيتم استخراج user_id تلقائياً) *</label>
+                <label>اسم المستخدم أو رقم الهاتف أو البريد الإلكتروني أو user_id (سيتم استخراج user_id تلقائياً) *</label>
                 <input
                   className="input"
                   type="text"
-                  placeholder="مثال: username123 أو 01012345678 أو 42"
+                  placeholder="مثال: username123 أو 01012345678 أو example@mail.com أو 42"
                   value={formData.value}
                   onChange={(e) => setFormData({ ...formData, value: e.target.value })}
                 />

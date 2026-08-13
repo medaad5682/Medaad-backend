@@ -122,6 +122,7 @@ export default function SuperStudentsPage() {
           first_name: user.first_name,
           username: user.username,
           phone: user.phone || '',
+          email: user.email || '',
           password: '' 
       });
       
@@ -189,13 +190,19 @@ export default function SuperStudentsPage() {
 
   const handleSaveChanges = () => {
       if (!editFormData.first_name) return showToast('الاسم مطلوب', 'error');
-      
+
+      const trimmedEmail = editFormData.email ? editFormData.email.trim() : '';
+      if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+          return showToast('صيغة البريد الإلكتروني غير صحيحة', 'error');
+      }
+
       const payload = {
           userId: viewUser.id,
           data: {
               first_name: editFormData.first_name,
               phone: editFormData.phone && editFormData.phone.trim() !== '' ? editFormData.phone.trim() : null,
               username: editFormData.username,
+              email: trimmedEmail || null,
               ...(editFormData.password ? { password: editFormData.password } : {}) 
           }
       };
@@ -286,7 +293,7 @@ export default function SuperStudentsPage() {
              <span className="search-icon">🔍</span>
              <input 
                 className="search-input" 
-                placeholder="بحث بالاسم، رقم الهاتف، أو الـ ID ثم اضغط Enter..." 
+                placeholder="بحث بالاسم، رقم الهاتف، البريد الإلكتروني، أو الـ ID ثم اضغط Enter..." 
                 value={searchTerm} 
                 onChange={e=>setSearchTerm(e.target.value)} 
                 onKeyDown={handleSearchKey}
@@ -325,6 +332,7 @@ export default function SuperStudentsPage() {
                         <th style={{textAlign:'right'}}>الاسم</th>
                         <th style={{textAlign:'center'}}>المستخدم</th>
                         <th style={{textAlign:'center'}}>الهاتف</th>
+                        <th style={{textAlign:'center'}}>البريد الإلكتروني</th>
                         <th style={{textAlign:'center'}}>الجهاز</th>
                         <th style={{textAlign:'center', width:'100px'}}>الحالة</th>
                     </tr>
@@ -340,6 +348,7 @@ export default function SuperStudentsPage() {
                             </td>
                             <td style={{textAlign:'center', direction:'ltr', fontFamily:'monospace', color:'var(--gold)'}}>@{std.username}</td>
                             <td style={{textAlign:'center', direction:'ltr', fontFamily:'monospace', color:'var(--text-secondary)'}}>{std.phone}</td>
+                            <td style={{textAlign:'center', direction:'ltr', fontFamily:'monospace', fontSize:'0.85em', color:'var(--text-secondary)'}}>{std.email || '-'}</td>
                             <td style={{textAlign:'center'}}>
                                 {std.device_id ? <span title={std.device_id} className="device-badge used">📱 مرتبط</span> : <span className="device-badge free">⚪ فارغ</span>}
                             </td>
@@ -351,7 +360,7 @@ export default function SuperStudentsPage() {
                             </td>
                         </tr>
                     ))}
-                    {students.length === 0 && <tr><td colSpan="7" style={{textAlign:'center', padding:'40px', color:'var(--text-muted)'}}>لا يوجد نتائج</td></tr>}
+                    {students.length === 0 && <tr><td colSpan="8" style={{textAlign:'center', padding:'40px', color:'var(--text-muted)'}}>لا يوجد نتائج</td></tr>}
                 </tbody>
             </table>
           )}
@@ -492,6 +501,17 @@ export default function SuperStudentsPage() {
                                       <div className="val-box">
                                           {viewUser.device_id ? <span style={{color:'#facc15', fontWeight:'bold'}}>📱 مرتبط بجهاز</span> : <span style={{color:'#4ade80', fontWeight:'bold'}}>⚪ غير مرتبط</span>}
                                       </div>
+                                  )}
+                              </div>
+                          </div>
+
+                          <div className="data-row">
+                              <div className="data-item">
+                                  <label>البريد الإلكتروني</label>
+                                  {isEditing ? (
+                                      <input className="input-field ltr" type="email" placeholder="example@mail.com" value={editFormData.email} onChange={e => setEditFormData({...editFormData, email: e.target.value})} />
+                                  ) : (
+                                      <div className="val-box ltr">{viewUser.email || '-'}</div>
                                   )}
                               </div>
                           </div>

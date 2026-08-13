@@ -29,7 +29,7 @@ export default async (req, res) => {
       // ب) جلب بيانات المستخدم من جدول users
       const { data: user } = await supabase
         .from('users')
-        .select('username, phone, first_name')
+        .select('username, phone, first_name, email')
         .eq('id', auth.userId)
         .single();
 
@@ -54,6 +54,7 @@ export default async (req, res) => {
           profile_image: processedImage,
           username: user?.username || "",
           phone: user?.phone || "",
+          email: user?.email || "",
           user_first_name: user?.first_name || "",
           payment_details: {
             cash_numbers: paymentDetails.cash_numbers || [],

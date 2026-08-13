@@ -81,14 +81,14 @@ export default async function handler(req, res) {
       // ✅ التعديل: إزالة شرط الرتبة لجلب كافة المستخدمين (مدرسين، طلاب، مشرفين، إلخ)
       let query = supabase
         .from('users')
-        .select('id, first_name, username, phone, role, is_blocked, created_at, is_admin, devices(id, fingerprint)', { count: 'exact' })
+        .select('id, first_name, username, phone, email, role, is_blocked, created_at, is_admin, devices(id, fingerprint)', { count: 'exact' })
         .order('created_at', { ascending: false })
         .range(from, to);
 
       // تطبيق البحث
       if (search) {
         const term = search.trim();
-        let orQuery = `first_name.ilike.%${term}%,phone.ilike.%${term}%,username.ilike.%${term}%`;
+        let orQuery = `first_name.ilike.%${term}%,phone.ilike.%${term}%,username.ilike.%${term}%,email.ilike.%${term}%`;
         if (/^\d+$/.test(term)) orQuery += `,id.eq.${term}`;
         query = query.or(orQuery);
       }
@@ -242,16 +242,33 @@ export default async function handler(req, res) {
         // 4. تحديث البيانات
         case 'update_profile':
           if (!data) return res.status(400).json({ error: 'لا توجد بيانات' });
+          if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email).trim())) {
+            return res.status(400).json({ error: 'صيغة البريد الإلكتروني غير صحيحة' });
+          }
           const updates = { 
              first_name: data.first_name, 
              phone: data.phone, 
-             username: data.username 
+             username: data.username,
+             ...(data.email !== undefined ? { email: data.email ? String(data.email).trim().toLowerCase() : null } : {})
           };
           
           // ✅ التعديل: التشفير باستخدام bcryptjs بنفس الطريقة التي أرسلتها
           if (data.password && data.password.trim() !== '') {
              const hashedPassword = await bcrypt.hash(data.password, 10);
              updates.password = hashedPassword; 
+          }
+
+          // ✅ التحقق من عدم تكرار البريد الإلكتروني مع مستخدم آخر قبل التحديث
+          if (updates.email) {
+            const { data: existingEmailUser } = await supabase
+              .from('users')
+              .select('id')
+              .eq('email', updates.email)
+              .neq('id', userId)
+              .maybeSingle();
+            if (existingEmailUser) {
+              return res.status(400).json({ error: 'البريد الإلكتروني مستخدم بالفعل من حساب آخر' });
+            }
           }
 
           const { error: updateErr } = await supabase.from('users').update(updates).eq('id', userId);

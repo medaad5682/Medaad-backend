@@ -102,7 +102,7 @@ export default async (req, res) => {
         // --- الحالة 2: الجدول والبحث ---
         let query = supabase
             .from('users')
-            .select(`id, first_name, username, phone, created_at, is_blocked, is_admin, devices(fingerprint)`, { count: 'exact' });
+            .select(`id, first_name, username, phone, email, created_at, is_blocked, is_admin, devices(fingerprint)`, { count: 'exact' });
 
         if (search && search.trim() !== '') {
             // ✅ مسار البحث العام (يبحث في جميع الطلاب بالمنصة)
@@ -110,7 +110,8 @@ export default async (req, res) => {
             
             const term = search.trim();
             // ✅ التعديل هنا: البحث الدقيق والمطابق تماماً (eq بدلاً من ilike)
-            let orQuery = `first_name.eq.${term},username.eq.${term},phone.eq.${term}`;
+            // ✅ إضافة البريد الإلكتروني كحقل بحث (يُطابق دون حساسية لحالة الأحرف)
+            let orQuery = `first_name.eq.${term},username.eq.${term},phone.eq.${term},email.ilike.${term}`;
             
             if (/^\d+$/.test(term)) {
                 orQuery += `,id.eq.${term}`;

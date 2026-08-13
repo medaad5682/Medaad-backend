@@ -249,7 +249,7 @@ export default function StudentsPage() {
               <span className="search-icon">{Icons.search}</span>
               <input 
                 className="search-input" 
-                placeholder="بحث (اسم، هاتف، ID) + Enter..." 
+                placeholder="بحث (اسم، هاتف، بريد إلكتروني، ID) + Enter..." 
                 value={searchTerm} 
                 onChange={e=>setSearchTerm(e.target.value)} 
                 onKeyDown={handleSearchKey}
@@ -302,6 +302,7 @@ export default function StudentsPage() {
                             <th style={{textAlign:'right'}}>الاسم</th>
                             <th style={{textAlign:'center'}}>المستخدم</th>
                             <th style={{textAlign:'center'}}>الهاتف</th>
+                            <th style={{textAlign:'center'}}>البريد الإلكتروني</th>
                             <th style={{textAlign:'center'}}>تاريخ الانضمام</th>
                             <th style={{textAlign:'center', width:'100px'}}>الحالة</th>
                         </tr>
@@ -322,6 +323,7 @@ export default function StudentsPage() {
                                 </td>
                                 <td className="mono-text center-text highlight-text">{std.username}</td>
                                 <td className="mono-text center-text">{std.phone}</td>
+                                <td className="mono-text center-text" style={{fontSize:'0.85em'}}>{std.email || '-'}</td>
                                 <td className="date-cell">{formatDate(std.created_at)}</td>
                                 <td>
                                     <div className="status-cell">
@@ -332,7 +334,7 @@ export default function StudentsPage() {
                             </tr>
                         ))}
                         {students.length === 0 && (
-                            <tr><td colSpan="7" className="empty-state">لا يوجد نتائج تطابق بحثك</td></tr>
+                            <tr><td colSpan="8" className="empty-state">لا يوجد نتائج تطابق بحثك</td></tr>
                         )}
                     </tbody>
                 </table>
@@ -434,6 +436,10 @@ export default function StudentsPage() {
                           <div className="data-item">
                               <label>رقم الهاتف</label>
                               <div className="val-box ltr">{viewUser.phone}</div>
+                          </div>
+                          <div className="data-item">
+                              <label>البريد الإلكتروني</label>
+                              <div className="val-box ltr">{viewUser.email || '-'}</div>
                           </div>
                       </div>
 

@@ -1,11 +1,14 @@
 import { supabase } from '../../../lib/supabaseClient';
 import bcrypt from 'bcryptjs';
+import { consumeVerifyToken } from '../../../lib/otpHelper';
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default async (req, res) => {
   // السماح فقط بطلبات POST
   if (req.method !== 'POST') return res.status(405).json({ message: 'Method Not Allowed' });
 
-  const { firstName, username, password, phone } = req.body;
+  const { firstName, username, password, phone, email, verifyToken } = req.body;
 
   // ✅ تعديل 1: معالجة رقم الهاتف ليكون null حقيقي إذا لم يتم إدخاله
   // نعالج الحالة إذا كان "null" كنص، أو نص فارغ، أو undefined
@@ -15,6 +18,16 @@ export default async (req, res) => {
   if (!firstName || !username || !password) {
     return res.status(400).json({ success: false, message: 'الاسم واسم المستخدم وكلمة المرور حقول مطلوبة' });
   }
+
+  // 🆕 البريد الإلكتروني + رمز التحقق (OTP) أصبحا إلزاميين
+  if (!email || !EMAIL_REGEX.test(email)) {
+    return res.status(400).json({ success: false, message: 'يرجى إدخال بريد إلكتروني صحيح' });
+  }
+  if (!verifyToken) {
+    return res.status(400).json({ success: false, message: 'يجب التحقق من البريد الإلكتروني أولاً' });
+  }
+
+  const emailToSave = email.trim().toLowerCase();
 
   // 3. التحقق من الصيغ
   const usernameRegex = /^[a-zA-Z0-9]+$/;
@@ -27,6 +40,21 @@ export default async (req, res) => {
   }
 
   try {
+    // 🆕 0. التأكد من أن رمز التحقق (verifyToken) صالح فعلاً ومرتبط بهذا البريد
+    //    (أي أن /api/auth/verify-otp تم استدعاؤه بنجاح لهذا البريد قبل الوصول هنا)
+    const isEmailVerified = await consumeVerifyToken({
+      email: emailToSave,
+      purpose: 'signup',
+      verifyToken,
+    });
+
+    if (!isEmailVerified) {
+      return res.status(400).json({
+        success: false,
+        message: 'رمز التحقق غير صالح أو منتهي الصلاحية. يرجى إعادة التحقق من البريد الإلكتروني.',
+      });
+    }
+
     // 4. التحقق من عدم تكرار اسم المستخدم
     const { data: existingUser } = await supabase
       .from('users')
@@ -36,6 +64,18 @@ export default async (req, res) => {
 
     if (existingUser) {
       return res.status(400).json({ success: false, message: 'اسم المستخدم مسجل بالفعل، اختر اسماً آخر.' });
+    }
+
+    // 🆕 التحقق من عدم تكرار البريد الإلكتروني (تحسباً لحالة السباق بين
+    //    استدعاء send-otp والوصول الفعلي هنا)
+    const { data: existingEmail } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', emailToSave)
+      .maybeSingle();
+
+    if (existingEmail) {
+      return res.status(400).json({ success: false, message: 'البريد الإلكتروني مسجل بالفعل.' });
     }
 
     // ✅ تعديل 3: التحقق من تكرار الهاتف فقط إذا كانت القيمة ليست null
@@ -61,6 +101,8 @@ export default async (req, res) => {
         username: username,
         password: hashedPassword,
         phone: phoneToSave, // ✅ تعديل 4: حفظ القيمة المعالجة (رقم أو null)
+        email: emailToSave,       // 🆕
+        email_verified: true,     // 🆕 لأنه تم التحقق عبر verifyToken أعلاه
         is_admin: false,
         is_blocked: false
       });
