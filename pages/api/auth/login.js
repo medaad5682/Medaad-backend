@@ -14,10 +14,16 @@ export default async (req, res) => {
     // 0. البحث المبكر عن المستخدم (قبل بوابة App Check) حتى نستطيع مطابقة
     //    القائمة البيضاء بناءً على user_id الحقيقي بدلاً من device_id.
     //    نفس هذا الاستعلام كان سيُنفذ لاحقاً على أي حال، فقط قدّمناه للأمام.
+    // 🆕 السماح بتسجيل الدخول عبر اسم المستخدم أو الهاتف أو البريد الإلكتروني
+    //    (نفس منطق تحديد الحساب المستخدم في send-otp.js لصفحة استرجاع كلمة المرور)
+    const normalizedIdentifier = (identifier || '').toString().trim();
+    const identifierForEmail = normalizedIdentifier.toLowerCase().replace(/[(),]/g, '');
+    const identifierSafe = normalizedIdentifier.replace(/[(),]/g, '');
+
     const { data: user } = await supabase
       .from('users')
       .select('id, password, first_name, username, is_admin, is_blocked, role, teacher_profile_id, failed_attempts, lockout_until') 
-      .or(`username.eq.${identifier},phone.eq.${identifier}`)
+      .or(`username.eq.${identifierSafe},phone.eq.${identifierSafe},email.eq.${identifierForEmail}`)
       .maybeSingle();
 
     // 🚀 =========================================================
