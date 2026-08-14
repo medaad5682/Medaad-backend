@@ -8,41 +8,16 @@ const PHONE_REGEX = /^01[0-9]{9}$/;
 const ALLOWED_PURPOSES = ['signup', 'reset_password', 'change_email'];
 
 export default async (req, res) => {
-  // ⏱️ نفس منطق اللوجينج اللي في signup.js عشان نعرف أي خطوة هي المسؤولة
-  // عن البطء اللي بيحصل لما المستخدم يدوس "إنشاء حساب" (اللي بيستدعي
-  // send-otp فعلياً، مش signup.js — signup.js بيتنفذ بعد التحقق من OTP)
-  const t0 = Date.now();
-  const reqId = Math.random().toString(36).slice(2, 8);
-  const log = (step, extra = '') => {
-    console.log(`[send-otp:${reqId}] +${Date.now() - t0}ms | ${step}${extra ? ' | ' + extra : ''}`);
-  };
-  const timed = (label, promise) => {
-    const s = Date.now();
-    return Promise.resolve(promise).then(
-      (result) => {
-        log(`⤷ ${label} done`, `took ${Date.now() - s}ms`);
-        return result;
-      },
-      (err) => {
-        log(`⤷ ${label} FAILED`, `took ${Date.now() - s}ms | ${err?.message || err}`);
-        throw err;
-      }
-    );
-  };
-  log('start');
-
   if (req.method !== 'POST') return res.status(405).json({ success: false, message: 'Method Not Allowed' });
 
   // Same app-secret gate used by the rest of the auth endpoints
   const appSecret = req.headers['x-app-secret'];
   if (appSecret !== process.env.APP_SECRET) {
-    log('rejected: bad app secret');
     return res.status(403).json({ success: false, message: 'غير مصرح لك باستخدام هذا الرابط' });
   }
 
   let { email, purpose, username, phone, identifier } = req.body;
   purpose = ALLOWED_PURPOSES.includes(purpose) ? purpose : 'signup';
-  log('body parsed', `purpose=${purpose} username=${username} hasPhone=${!!phone}`);
 
   try {
     // ============================================================
@@ -84,8 +59,7 @@ export default async (req, res) => {
 
       const accountEmail = existing.email;
 
-      log('calling requestOtp (DB writes + SMTP send)');
-      const result = await requestOtp({ email: accountEmail, purpose, log });
+      const result = await requestOtp({ email: accountEmail, purpose });
 
       if (!result.ok) {
         return res.status(result.status).json({ success: false, message: result.message });
@@ -121,58 +95,50 @@ export default async (req, res) => {
 
       const phoneToCheck = (phone && phone !== 'null' && String(phone).trim() !== '') ? String(phone).trim() : null;
       if (phoneToCheck && !PHONE_REGEX.test(phoneToCheck)) {
-        log('rejected: bad phone format');
         return res.status(400).json({ success: false, message: 'رقم هاتف غير صالح (11 رقم يبدأ بـ 01)' });
       }
 
-      // ⚡ الثلاث فحوصات دي مستقلة عن بعضها (كل واحدة بتقرأ عمود مختلف) —
-      // كانت بتتنفذ واحدة ورا التانية (3 round-trips للـ DB بالتتابع)،
-      // بقت تتنفذ متوازية زي ما عملنا في signup.js بالظبط.
-      log('existence checks: start');
-      const [
-        { data: existingEmail },
-        { data: existingUsername },
-        { data: existingPhone },
-      ] = await Promise.all([
-        timed('email lookup', supabase.from('users').select('id').eq('email', email).maybeSingle()),
-        timed('username lookup', supabase.from('users').select('id').eq('username', username).maybeSingle()),
-        timed(
-          'phone lookup',
-          phoneToCheck
-            ? supabase.from('users').select('id').eq('phone', phoneToCheck).maybeSingle()
-            : Promise.resolve({ data: null })
-        ),
-      ]);
-      log('existence checks: all settled');
+      const { data: existingEmail } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', email)
+        .maybeSingle();
 
       if (existingEmail) {
-        log('rejected: email taken');
         return res.status(400).json({ success: false, message: 'البريد الإلكتروني مسجل بالفعل' });
       }
 
+      const { data: existingUsername } = await supabase
+        .from('users')
+        .select('id')
+        .eq('username', username)
+        .maybeSingle();
+
       if (existingUsername) {
-        log('rejected: username taken');
         return res.status(400).json({ success: false, message: 'اسم المستخدم مسجل بالفعل، اختر اسماً آخر.' });
       }
 
-      if (phoneToCheck && existingPhone) {
-        log('rejected: phone taken');
-        return res.status(400).json({ success: false, message: 'رقم الهاتف مسجل مسبقاً. حاول تسجيل الدخول.' });
+      if (phoneToCheck) {
+        const { data: existingPhone } = await supabase
+          .from('users')
+          .select('id')
+          .eq('phone', phoneToCheck)
+          .maybeSingle();
+
+        if (existingPhone) {
+          return res.status(400).json({ success: false, message: 'رقم الهاتف مسجل مسبقاً. حاول تسجيل الدخول.' });
+        }
       }
     }
 
-    log('calling requestOtp (DB writes + SMTP send)');
-    const result = await requestOtp({ email, purpose, log });
+    const result = await requestOtp({ email, purpose });
 
     if (!result.ok) {
-      log('requestOtp rejected', `status=${result.status}`);
       return res.status(result.status).json({ success: false, message: result.message });
     }
 
-    log('success, sending response', `total=${Date.now() - t0}ms`);
     return res.status(200).json({ success: true, message: 'تم إرسال رمز التحقق إلى بريدك الإلكتروني' });
   } catch (error) {
-    log('EXCEPTION', `total=${Date.now() - t0}ms | ${error?.message || error}`);
     console.error('send-otp error:', error);
     return res.status(500).json({ success: false, message: 'خطأ في السيرفر' });
   }
