@@ -40,6 +40,31 @@ const getDayNameFromDateStr = (dateStr) => {
   return daysMap[new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay()];
 };
 
+// ============================================================
+// ✅ إصلاح: جلب كل الصفوف بدون التقيد بحد PostgREST الافتراضي للصفوف
+// (كان الاستعلام يُرجع فقط أول دفعة من الصفوف الافتراضية، ما يجعل
+//  عدد الطلاب النشطين يظهر أقل من العدد الحقيقي، مثال: 50 بدلاً من 164)
+// نستخدم .range() في حلقة حتى تُرجع الصفحة عدد صفوف أقل من الحجم المطلوب
+// ============================================================
+const PAGE_SIZE = 1000;
+const fetchAllRows = async (queryBuilderFactory) => {
+  let allRows = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await queryBuilderFactory().range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+
+    const rows = data || [];
+    allRows = allRows.concat(rows);
+
+    if (rows.length < PAGE_SIZE) break; // آخر صفحة
+    from += PAGE_SIZE;
+  }
+
+  return allRows;
+};
+
 export default async (req, res) => {
   // 1. التحقق من الصلاحية
   const { user, error } = await requireTeacherOrAdmin(req, res);
@@ -149,33 +174,32 @@ export default async (req, res) => {
     // 4. جلب بيانات الطلاب (مع استثناء المدرسين والمشرفين)
     // =========================================================
     
-    const [courseAccessResult, subjectAccessResult] = await Promise.all([
+    const [courseAccess, subjectAccess] = await Promise.all([
         // أ. مشتركو الكورسات (فقط من لديهم دور student)
-        // ✅ التعديل هنا: استخدام Promise.resolve لمنع فشل Promise.all إذا كانت المصفوفة فارغة
-        courseIds.length > 0 ? 
-            supabase
-            .from('user_course_access')
-            .select('course_id, user_id, users!inner(role)') 
-            .in('course_id', courseIds)
-            .eq('users.role', 'student') 
-            : Promise.resolve({ data: [], error: null }),
+        // ✅ التعديل: جلب كل الصفوف عبر fetchAllRows بدل استعلام واحد قد يُقتطع
+        courseIds.length > 0
+            ? fetchAllRows(() =>
+                supabase
+                  .from('user_course_access')
+                  .select('course_id, user_id, users!inner(role)')
+                  .in('course_id', courseIds)
+                  .eq('users.role', 'student')
+                  .order('user_id', { ascending: true })
+              )
+            : Promise.resolve([]),
 
         // ب. مشتركو المواد (فقط من لديهم دور student)
-        // ✅ التعديل هنا: استخدام Promise.resolve
-        subjectIds.length > 0 ?
-            supabase
-            .from('user_subject_access')
-            .select('subject_id, user_id, users!inner(role)') 
-            .in('subject_id', subjectIds)
-            .eq('users.role', 'student') 
-            : Promise.resolve({ data: [], error: null })
+        subjectIds.length > 0
+            ? fetchAllRows(() =>
+                supabase
+                  .from('user_subject_access')
+                  .select('subject_id, user_id, users!inner(role)')
+                  .in('subject_id', subjectIds)
+                  .eq('users.role', 'student')
+                  .order('user_id', { ascending: true })
+              )
+            : Promise.resolve([])
     ]);
-
-    if (courseAccessResult.error) throw courseAccessResult.error;
-    if (subjectAccessResult.error) throw subjectAccessResult.error;
-
-    const courseAccess = courseAccessResult.data || [];
-    const subjectAccess = subjectAccessResult.data || [];
 
     // =========================================================
     // 5. الحسابات النهائية وتجهيز الرد
