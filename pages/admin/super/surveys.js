@@ -396,14 +396,21 @@ export default function SurveysPage() {
 
       {/* ══════════════ Builder Modal ══════════════ */}
       {showBuilder && (
-        <div className="modal-overlay" onClick={() => setShowBuilder(false)}>
+        <div className="modal-overlay">
           <div className="modal-box" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{editingId ? 'تعديل الاستبيان' : 'استبيان جديد'}</h3>
               <button className="icon-btn" onClick={() => setShowBuilder(false)}><CloseIcon /></button>
             </div>
 
-            <form onSubmit={handleSubmitForm} className="modal-body">
+            <form
+              onSubmit={handleSubmitForm}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
+                  e.preventDefault();
+                }
+              }}
+              className="modal-body">
               <div className="form-group">
                 <label>عنوان الاستبيان</label>
                 <input className="input-field" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} required maxLength={120} />
