@@ -22,6 +22,23 @@ export default async function handler(req, res) {
   try {
     const nowIso = new Date().toISOString();
 
+    // 🆕 لازم يكون الحساب عمره 3 أسابيع على الأقل قبل ما نعرضله أي استبيان
+    const { data: userRow, error: userErr } = await supabase
+      .from('users')
+      .select('created_at')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (userErr) throw userErr;
+
+    if (userRow?.created_at) {
+      const THREE_WEEKS_MS = 21 * 24 * 60 * 60 * 1000;
+      const accountAgeMs = Date.now() - new Date(userRow.created_at).getTime();
+      if (accountAgeMs < THREE_WEEKS_MS) {
+        return res.status(200).json({ success: true, survey: null });
+      }
+    }
+
     // كل الاستبيانات النشطة، اللي بدأ وقتها، وغير منتهية الصلاحية
     const { data: activeSurveys, error: surveysErr } = await supabase
       .from('surveys')
