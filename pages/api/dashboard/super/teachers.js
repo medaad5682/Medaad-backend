@@ -253,19 +253,80 @@ export default async (req, res) => {
   // ============================================================
   // DELETE: حذف مدرس
   // ============================================================
+  // ملاحظة مهمة: جدول teachers مرتبط بعلاقات مفتاح أجنبي (Foreign Keys) من عدة
+  // جداول (courses, discount_codes, subscription_requests, daily_teacher_user_stats,
+  // wheel_prizes)، وجدول users نفسه مرتبط بجدول devices/user_course_access/
+  // user_subject_access. الحذف المباشر بدون تنظيف هذه الجداول أولاً كان يفشل
+  // بخطأ "foreign key constraint violation" (23503) في أي مدرس سبق له تسجيل
+  // الدخول (له بصمة جهاز مسجّلة) أو لديه كورسات/أكواد خصم/طلبات مرتبطة به.
   if (req.method === 'DELETE') {
     const { id } = req.query;
+    if (!id) return res.status(400).json({ error: 'معرف المدرس مطلوب' });
+
     try {
-      // 1. حذف جميع المستخدمين المرتبطين (المدرس + المشرفين)
-      await supabase.from('users').delete().eq('teacher_profile_id', id);
-      
-      // 2. حذف بروفايل المدرس
+      // 0. جلب معرفات كل الحسابات المرتبطة بهذا المدرس (حسابه الرئيسي + المشرفين)
+      const { data: linkedUsers } = await supabase
+        .from('users')
+        .select('id')
+        .eq('teacher_profile_id', id);
+      const linkedUserIds = (linkedUsers || []).map(u => u.id);
+
+      // 1. تنظيف كل ما يتبع كورسات المدرس قبل حذفها (نفس منطق حذف المحتوى في content.js)
+      const { data: courses } = await supabase.from('courses').select('id').eq('teacher_id', id);
+      const courseIds = (courses || []).map(c => c.id);
+
+      if (courseIds.length > 0) {
+        const { data: subjects } = await supabase.from('subjects').select('id').in('course_id', courseIds);
+        const subjectIds = (subjects || []).map(s => s.id);
+
+        if (subjectIds.length > 0) {
+          // الامتحانات لا تُحذف تلقائياً (Cascade) — يجب حذف محاولات الطلاب والأسئلة أولاً
+          const { data: exams } = await supabase.from('exams').select('id').in('subject_id', subjectIds);
+          const examIds = (exams || []).map(e => e.id);
+          if (examIds.length > 0) {
+            await supabase.from('user_attempts').delete().in('exam_id', examIds);
+            await supabase.from('questions').delete().in('exam_id', examIds);
+            await supabase.from('exams').delete().in('id', examIds);
+          }
+          await supabase.from('user_subject_access').delete().in('subject_id', subjectIds);
+        }
+
+        await supabase.from('user_course_access').delete().in('course_id', courseIds);
+
+        // حذف الكورسات نفسها (يحذف تلقائياً المواد/الفصول/الفيديوهات المرتبطة بها Cascade)
+        await supabase.from('courses').delete().in('id', courseIds);
+      }
+
+      // 2. تنظيف الجداول الأخرى المرتبطة مباشرة بمعرف المدرس (teachers.id)
+      await supabase.from('discount_codes').delete().eq('teacher_id', id);
+      await supabase.from('subscription_requests').delete().eq('teacher_id', id);
+      await supabase.from('daily_teacher_user_stats').delete().eq('teacher_id', id);
+      // فك ربط جوائز عجلة الحظ بدلاً من حذفها (حفاظاً على سجل مشاركات الطلاب المرتبط بها)
+      await supabase.from('wheel_prizes').update({ teacher_id: null }).eq('teacher_id', id);
+
+      // 3. تنظيف بيانات حسابات المستخدمين المرتبطة (المدرس + المشرفين) قبل حذفها
+      //    (devices/user_course_access/user_subject_access — نفس منطق حذف الطلاب في students.js)
+      if (linkedUserIds.length > 0) {
+        await supabase.from('devices').delete().in('user_id', linkedUserIds);
+        await supabase.from('user_course_access').delete().in('user_id', linkedUserIds);
+        await supabase.from('user_subject_access').delete().in('user_id', linkedUserIds);
+      }
+
+      // 4. حذف جميع المستخدمين المرتبطين (المدرس + المشرفين)
+      const { error: usersError } = await supabase.from('users').delete().eq('teacher_profile_id', id);
+      if (usersError) throw usersError;
+
+      // 5. حذف بروفايل المدرس أخيراً
       const { error } = await supabase.from('teachers').delete().eq('id', id);
-      
       if (error) throw error;
 
       return res.status(200).json({ success: true });
     } catch (err) {
+      console.error('❌ [DeleteTeacher] Error:', err);
+      // خطأ قيد المفتاح الأجنبي (Foreign Key) — رسالة أوضح للأدمن بدل الخطأ الخام
+      if (err.code === '23503') {
+        return res.status(400).json({ error: 'تعذر حذف المدرس، لا تزال هناك بيانات أخرى مرتبطة به لم يتم حذفها.' });
+      }
       return res.status(500).json({ error: err.message });
     }
   }
