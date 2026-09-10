@@ -311,9 +311,9 @@ export default function SuperRequestsPage() {
                             </div>
                             <div className="header-right-actions flex-center gap-2">
                                 {req.teachers && (
-                                    <span className="teacher-badge flex-center gap-1">
-                                        <IconTeacher size={14} /> 
-                                        {req.teachers.name}
+                                    <span className="teacher-badge flex-center gap-1" title={req.teachers.name}>
+                                        <IconTeacher size={14} className="teacher-badge-icon" />
+                                        <span className="teacher-badge-name">{req.teachers.name}</span>
                                     </span>
                                 )}
                                 <button
@@ -594,13 +594,15 @@ export default function SuperRequestsPage() {
         .request-card.approved { border-color: #22c55e; }
         .request-card.rejected { border-color: #ef4444; opacity: 0.8; }
 
-        .card-header { background: var(--bg-elevated); padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
-        .req-meta { display: flex; gap: 8px; align-items: center; font-size: 0.8em; color: var(--text-secondary); }
+        .card-header { background: var(--bg-elevated); padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
+        .req-meta { display: flex; gap: 8px; align-items: center; font-size: 0.8em; color: var(--text-secondary); flex-shrink: 0; }
         .req-id { font-family: monospace; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; color: var(--text-primary); }
-        .header-right-actions { flex-shrink: 0; }
-        .teacher-badge { background: var(--gold-dim); color: var(--gold); padding: 3px 8px; border-radius: 15px; font-size: 0.75em; font-weight: bold; border: 1px solid var(--border-accent); }
+        .header-right-actions { min-width: 0; max-width: 100%; }
+        .teacher-badge { background: var(--gold-dim); color: var(--gold); padding: 3px 8px; border-radius: 15px; font-size: 0.75em; font-weight: bold; border: 1px solid var(--border-accent); max-width: 110px; min-width: 0; }
+        .teacher-badge-icon { flex-shrink: 0; }
+        .teacher-badge-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
-        .btn-delete-request { width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-muted); cursor: pointer; transition: all 0.2s; padding: 0; }
+        .btn-delete-request { width: 24px; min-width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-muted); cursor: pointer; transition: all 0.2s; padding: 0; }
         .btn-delete-request:hover:not(:disabled) { background: #ef4444; border-color: #ef4444; color: #fff; transform: scale(1.1); }
         .btn-delete-request:disabled { opacity: 0.4; cursor: not-allowed; }
 
