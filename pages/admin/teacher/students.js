@@ -1,5 +1,5 @@
 import TeacherLayout from '../../../components/TeacherLayout';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 // أيقونة الطلاب للعنوان (نفس أيقونة لوحة الإدارة العليا)
 const StudentsIcon = () => (
@@ -32,6 +32,15 @@ export default function StudentsPage() {
 
   // البحث والفلترة
   const [searchTerm, setSearchTerm] = useState('');
+  // النص المُطبَّق فعلياً (بعد Enter) — هو الذي يدخل في dependencies الـ useEffect
+  // حتى يحدث تغيير الصفحة + البحث في طلب واحد بدل طلبين متسابقين.
+  const [appliedSearch, setAppliedSearch] = useState('');
+
+  // ⚡ مراجع لتقليل الطلبات: لا نُعيد جلب /content ولا شجرة/باقات الفريق مع كل تنقل،
+  // ونتجاهل أي رد قديم وصل بعد رد أحدث (race condition).
+  const requestSeq = useRef(0);
+  const contentLoadedRef = useRef(false);
+  const teamMetaLoadedRef = useRef(false);
 
   // --- نظام الفلترة (Modal) ---
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -83,27 +92,33 @@ export default function StudentsPage() {
 
   // --- 1. جلب البيانات ---
   const fetchData = async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     try {
-        if (allCourses.length === 0) {
-            const resCourses = await fetch('/api/dashboard/teacher/content');
-            const coursesData = await resCourses.json();
-            setAllCourses(coursesData.courses || []);
-        }
-
-        let url = `/api/dashboard/teacher/students?page=${currentPage}&limit=${itemsPerPage}`;
-
-        const params = new URLSearchParams();
-        if (searchTerm) params.append('search', searchTerm);
+        const params = new URLSearchParams({ page: String(currentPage), limit: String(itemsPerPage) });
+        if (appliedSearch) params.append('search', appliedSearch);
         if (activeFilters.courses.length > 0) params.append('courses_filter', activeFilters.courses.join(','));
         if (activeFilters.subjects.length > 0) params.append('subjects_filter', activeFilters.subjects.join(','));
         if (activeFilters.courses.length + activeFilters.subjects.length > 1) params.append('filter_mode', filterMode);
         if (teacherFilterId) params.append('teacher_filter', teacherFilterId);
+        // القائد: شجرة الكورسات والباقات جاءت سابقاً ولا تتغير بين الصفحات — لا نطلبها مجدداً
+        if (teamMetaLoadedRef.current) params.append('skip_team_meta', '1');
 
-        if (params.toString()) url += `&${params.toString()}`;
+        // ⚡ /content مرة واحدة فقط (كان يُعاد جلبه مع كل تنقل لمن لا يملك كورسات)، وبالتوازي
+        // مع طلب الطلاب ودون انتظاره — فشله لا يمنع ظهور قائمة الطلاب.
+        if (!contentLoadedRef.current) {
+            contentLoadedRef.current = true; // يمنع تكرار الطلب لو تداخلت عمليتا جلب
+            fetch('/api/dashboard/teacher/content')
+                .then(r => r.json())
+                .then(d => setAllCourses(d.courses || []))
+                .catch(() => { contentLoadedRef.current = false; }); // نسمح بإعادة المحاولة
+        }
 
-        const res = await fetch(url);
+        const res = await fetch(`/api/dashboard/teacher/students?${params.toString()}`);
         const data = await res.json();
+
+        // رد قديم وصل بعد طلب أحدث؟ نتجاهله
+        if (seq !== requestSeq.current) return;
 
         if (res.ok) {
             setStudents(data.students || []);
@@ -112,24 +127,39 @@ export default function StudentsPage() {
             setIsLeader(data.isLeader || false);
             setTeamName(data.teamName || null);
             setTeamTeachers(data.teamTeachers || []);
-            setTeamCourses(data.teamCourses || []);
-            setTeamPackages(data.teamPackages || []);
+            // الحقول تغيب عند skip_team_meta — نحتفظ بالقيم السابقة ولا نمسحها
+            if (data.teamCourses !== undefined) {
+                setTeamCourses(data.teamCourses || []);
+                setTeamPackages(data.teamPackages || []);
+                if (data.isLeader) teamMetaLoadedRef.current = true;
+            }
             setSelectedUsers([]);
         }
     } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    finally { if (seq === requestSeq.current) setLoading(false); }
   };
 
   useEffect(() => {
       setCurrentUserId(localStorage.getItem('admin_user_id'));
       fetchData();
-  }, [currentPage, activeFilters, filterMode, teacherFilterId]);
+  }, [currentPage, appliedSearch, activeFilters, filterMode, teacherFilterId]);
 
   const handleSearchKey = (e) => {
-      if (e.key === 'Enter') {
+      if (e.key !== 'Enter') return;
+      const term = searchTerm.trim();
+      if (term === appliedSearch && currentPage === 1) {
+          fetchData(); // لن يتغير أي state => نعيد الجلب يدوياً
+      } else {
+          // تغيير واحد مُجمَّع => يشغّل الـ useEffect مرة واحدة فقط
+          setAppliedSearch(term);
           setCurrentPage(1);
-          fetchData();
       }
+  };
+
+  // زر التحديث: لو الصفحة ليست الأولى، تغيير الصفحة نفسه يشغّل الجلب (بدون طلب مزدوج)
+  const handleRefresh = () => {
+      if (currentPage !== 1) setCurrentPage(1);
+      else fetchData();
   };
 
   // --- 2. ملف الطالب ---
@@ -226,9 +256,13 @@ export default function StudentsPage() {
       }
       else if (actionType === 'revoke_filtered') {
           if (!activeFilters.courses.length && !activeFilters.subjects.length) return showToast('يجب تفعيل فلتر أولاً لمعرفة ما سيتم سحبه', 'error');
+          // ⚡ طلب واحد لكل الكورسات/المواد (كان طلب POST + إعادة جلب كاملة لكل عنصر على حدة)
           showConfirm('سحب الكورسات/المواد المفلترة من هؤلاء الطلاب؟', () => {
-              activeFilters.courses.forEach(cid => runApiCall('revoke_access', { userIds: selectedUsers, courseId: cid }));
-              activeFilters.subjects.forEach(sid => runApiCall('revoke_access', { userIds: selectedUsers, subjectId: sid }));
+              runApiCall('revoke_access', {
+                  userIds: selectedUsers,
+                  courseIds: activeFilters.courses,
+                  subjectIds: activeFilters.subjects
+              });
           });
       }
   };
@@ -300,7 +334,7 @@ export default function StudentsPage() {
               🌪️ فلترة {hasActiveFilters && `(${activeFilters.courses.length + activeFilters.subjects.length})`}
           </button>
 
-          <button onClick={() => { setCurrentPage(1); fetchData(); }} className="btn-refresh" title="تحديث البيانات">🔄</button>
+          <button onClick={handleRefresh} className="btn-refresh" title="تحديث البيانات">🔄</button>
       </div>
 
       {selectedUsers.length > 0 && (

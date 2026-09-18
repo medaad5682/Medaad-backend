@@ -18,6 +18,23 @@ const stripReportPrices = (packages = []) => (packages || []).map(pkg => {
     };
 });
 
+// حدود أمان: تمنع طلب صفحات ضخمة أو إجراءات جماعية بآلاف المعرفات
+const MAX_PAGE_SIZE = 100;
+const MAX_BULK_TARGETS = 500;
+
+// "1,2,x,3" -> [1,2,3]  (أرقام صحيحة موجبة فقط، بدون تكرار)
+const toIntList = (raw) => [...new Set(
+  String(Array.isArray(raw) ? raw.join(',') : (raw ?? ''))
+    .split(',')
+    .map(v => Number(v.trim()))
+    .filter(n => Number.isSafeInteger(n) && n > 0)
+)];
+
+// 🔒 نص البحث يُدمج داخل سلسلة .or() الخاصة بـ PostgREST. الفاصلة والأقواس وعلامات
+// الاقتباس تسمح بحقن شروط إضافية (مثل  x,id.gt.0 ) فتُرجع كل طلاب المنصة بدل
+// المطابقة الدقيقة المقصودة. نفس التنظيف المستخدم في pages/api/auth/login.js.
+const sanitizeSearchTerm = (raw) => String(raw ?? '').replace(/[,()"\\]/g, '').trim().slice(0, 100);
+
 export default async (req, res) => {
   // 1. التحقق من الصلاحية وجلب بيانات المدرس
   const { user, error } = await requireTeacherOrAdmin(req, res);
@@ -50,20 +67,20 @@ export default async (req, res) => {
     mySubjects = teamCtx.subjects;
     mySubjectIds = teamCtx.subjectIds;
   } else {
-    const { data: ownCourses } = await supabase
+    // ⚡ استعلام واحد (كورسات + موادها) بدل استعلامين متتابعين
+    const { data: ownCourses, error: ownError } = await supabase
       .from('courses')
-      .select('id, title, teacher_id')
+      .select('id, title, teacher_id, subjects(id, title, course_id)')
       .eq('teacher_id', teacherId);
 
-    myCourses = ownCourses || [];
+    if (ownError) return res.status(500).json({ error: ownError.message });
+
+    myCourses = (ownCourses || []).map(c => ({ id: c.id, title: c.title, teacher_id: c.teacher_id }));
     myCourseIds = myCourses.map(c => c.id);
 
-    const { data: ownSubjects } = await supabase
-      .from('subjects')
-      .select('id, title, course_id')
-      .in('course_id', myCourseIds);
-
-    mySubjects = ownSubjects || [];
+    mySubjects = (ownCourses || []).flatMap(c => (c.subjects || []).map(sub => ({
+      id: sub.id, title: sub.title, course_id: c.id
+    })));
     mySubjectIds = mySubjects.map(s => s.id);
   }
 
@@ -74,23 +91,13 @@ export default async (req, res) => {
     mySubjectIds = mySubjects.filter(s => myCourseIds.includes(s.course_id)).map(s => s.id);
   }
 
-  // دالة مساعدة: جلب معرفات الطلاب المشتركين عند هذا المدرس فقط
-  // ⚡ تحسين أداء: الاستعلامان (كورسات/مواد) مستقلان تماماً، فننفذهما بالتوازي
-  // بدل التتابع (Promise.all) — نفس عدد الاستعلامات، لكن بنصف زمن الانتظار تقريباً.
-  const getMyStudentIds = async () => {
-      const [{ data: cUsers }, { data: sUsers }] = await Promise.all([
-          supabase.from('user_course_access').select('user_id').in('course_id', myCourseIds),
-          supabase.from('user_subject_access').select('user_id').in('subject_id', mySubjectIds)
-      ]);
-
-      // دمج المعرفات وحذف التكرار
-      const ids = new Set([
-          ...(cUsers?.map(x => x.user_id) || []),
-          ...(sUsers?.map(x => x.user_id) || [])
-      ]);
-
-      return Array.from(ids);
-  };
+  // ⛔ تم حذف getMyStudentIds(): كانت تجلب *كل* صفوف user_course_access و
+  // user_subject_access الخاصة بالمدرس (أو بكل الفريق للقائد) إلى ذاكرة السيرفر عند
+  // كل تنقل بين الصفحات وعند كل إجراء POST، ثم تُعيد إرسال القائمة الناتجة داخل
+  // .in('id', [آلاف المعرفات]) في رابط الطلب. الآن:
+  //   • القائمة/الفلترة/الترقيم/العدد كلها داخل Postgres عبر الدالة
+  //     get_teacher_students_page (انظر sql/teacher_students_page.sql).
+  //   • إجراءات POST لا تحتاج قائمة الطلاب أصلاً (انظر التعليق في قسم POST).
 
   // ---------------------------------------------------------
   // 2. معالجة طلبات GET (جلب البيانات)
@@ -112,17 +119,24 @@ export default async (req, res) => {
             // ✅ تم إزالة قيد (validStudentIds) للسماح للمدرس بفتح بروفايل أي طالب للبحث عنه وإضافته
             // لا تقلق، البيانات المجلوبة محمية وتخص هذا المدرس فقط بسبب (.in('course_id', myCourseIds))
 
-            const { data: userCourses } = await supabase
-                .from('user_course_access')
-                .select('course_id, granted_at, expires_at, courses(title)')
-                .eq('user_id', get_details_for_user)
-                .in('course_id', myCourseIds); // 🔒 حماية: جلب كورسات هذا المدرس فقط
-            
-            const { data: userSubjects } = await supabase
-                .from('user_subject_access')
-                .select('subject_id, granted_at, expires_at, subjects(title, course_id)')
-                .eq('user_id', get_details_for_user)
-                .in('subject_id', mySubjectIds); // 🔒 حماية: جلب مواد هذا المدرس فقط
+            // ⚡ الاستعلامان مستقلان فننفذهما بالتوازي
+            const [
+                { data: userCourses, error: userCoursesError },
+                { data: userSubjects, error: userSubjectsError }
+            ] = await Promise.all([
+                supabase
+                    .from('user_course_access')
+                    .select('course_id, granted_at, expires_at, courses(title)')
+                    .eq('user_id', get_details_for_user)
+                    .in('course_id', myCourseIds), // 🔒 حماية: جلب كورسات هذا المدرس فقط
+                supabase
+                    .from('user_subject_access')
+                    .select('subject_id, granted_at, expires_at, subjects(title, course_id)')
+                    .eq('user_id', get_details_for_user)
+                    .in('subject_id', mySubjectIds) // 🔒 حماية: جلب مواد هذا المدرس فقط
+            ]);
+            // لو فشل الاستعلام لا نُظهر "لا يملك شيئاً" بالخطأ (كان سيدفع المدرس لمنح مكرر)
+            if (userCoursesError || userSubjectsError) throw (userCoursesError || userSubjectsError);
 
             const ownedCourseIds = userCourses?.map(uc => uc.course_id) || [];
             const ownedSubjectIds = userSubjects?.map(us => us.subject_id) || [];
@@ -157,152 +171,109 @@ export default async (req, res) => {
         }
 
         // --- الحالة 2: الجدول والبحث ---
-        let query = supabase
-            .from('users')
-            .select(`id, first_name, username, phone, email, created_at, is_blocked, is_admin, devices(fingerprint)`, { count: 'exact' });
-
-        if (search && search.trim() !== '') {
-            // ✅ مسار البحث العام (يبحث في جميع الطلاب بالمنصة)
-            query = query.eq('role', 'student');
-            
-            const term = search.trim();
-            // ✅ التعديل هنا: البحث الدقيق والمطابق تماماً (eq بدلاً من ilike)
-            // ✅ إضافة البريد الإلكتروني كحقل بحث (يُطابق دون حساسية لحالة الأحرف)
-            let orQuery = `first_name.eq.${term},username.eq.${term},phone.eq.${term},email.ilike.${term}`;
-            
-            if (/^\d+$/.test(term)) {
-                orQuery += `,id.eq.${term}`;
-            }
-            
-            query = query.or(orQuery);
-            
-        } else {
-            // ✅ المسار الافتراضي (بدون بحث): يجلب طلاب هذا المدرس فقط لتجنب الزحام
-            let targetStudentIds = await getMyStudentIds();
-
-            const hasCourseFilter = !!courses_filter;
-            const hasSubjectFilter = !!subjects_filter;
-
-            if (hasCourseFilter || hasSubjectFilter) {
-                const isAnd = filter_mode === 'and';
-                const filterCourseIds = hasCourseFilter ? courses_filter.split(',') : [];
-                const filterSubjectIds = hasSubjectFilter ? subjects_filter.split(',') : [];
-
-                // ⚡ تحسين أداء: كان وضع "AND" ينفذ استعلاماً منفصلاً لكل معرف كورس/مادة
-                // (N استعلام)؛ الآن استعلام واحد فقط لكل نوع (يجلب user_id + course_id/
-                // subject_id معاً) ثم يُجمَّع محلياً حسب المعرف، مع تنفيذ استعلامي
-                // الكورسات والمواد بالتوازي بدل التتابع.
-                const [courseRowsRes, subjectRowsRes] = await Promise.all([
-                    hasCourseFilter
-                        ? supabase.from('user_course_access').select('user_id, course_id').in('course_id', filterCourseIds)
-                        : Promise.resolve({ data: [] }),
-                    hasSubjectFilter
-                        ? supabase.from('user_subject_access').select('user_id, subject_id').in('subject_id', filterSubjectIds)
-                        : Promise.resolve({ data: [] })
-                ]);
-
-                // جمع مجموعات المستخدمين لكل فلتر
-                let courseUserSets = [];
-                if (hasCourseFilter) {
-                    const courseRows = courseRowsRes.data || [];
-                    if (isAnd) {
-                        // مجموعة مستقلة لكل كورس مطلوب (سيتم تقاطعها لاحقاً)
-                        const byCourse = new Map(filterCourseIds.map(cid => [String(cid), []]));
-                        for (const row of courseRows) {
-                            const key = String(row.course_id);
-                            if (byCourse.has(key)) byCourse.get(key).push(row.user_id);
-                        }
-                        courseUserSets = Array.from(byCourse.values());
-                    } else {
-                        courseUserSets = [courseRows.map(r => r.user_id)];
-                    }
-                }
-
-                let subjectUserSets = [];
-                if (hasSubjectFilter) {
-                    const subjectRows = subjectRowsRes.data || [];
-                    if (isAnd) {
-                        const bySubject = new Map(filterSubjectIds.map(sid => [String(sid), []]));
-                        for (const row of subjectRows) {
-                            const key = String(row.subject_id);
-                            if (bySubject.has(key)) bySubject.get(key).push(row.user_id);
-                        }
-                        subjectUserSets = Array.from(bySubject.values());
-                    } else {
-                        subjectUserSets = [subjectRows.map(r => r.user_id)];
-                    }
-                }
-
-                const allSets = [...courseUserSets, ...subjectUserSets];
-
-                let filteredIds;
-                if (isAnd) {
-                    // AND: تقاطع — الطالب يجب أن يكون في كل مجموعة
-                    filteredIds = allSets.length === 0
-                        ? []
-                        : allSets.reduce((acc, set) => acc.filter(id => set.includes(id)));
-                } else {
-                    // OR: اتحاد — الطالب في أي مجموعة
-                    filteredIds = [...new Set(allSets.flat())];
-                }
-
-                targetStudentIds = targetStudentIds.filter(id => filteredIds.includes(id));
-            }
-
-            if (targetStudentIds.length === 0) {
-                return res.status(200).json({ students: [], total: 0 });
-            }
-
-            query = query.in('id', targetStudentIds);
-        }
-
-        // ✅ إصلاح: تحويل page و limit إلى أرقام صريحة (نفس مشكلة داشبورد السوبر أدمن)
-        // بدون التحويل، "from + limit - 1" ينفذ جمع نصوص بدل جمع أرقام بداية من الصفحة الثانية
-        // مما يجعل "to" رقماً خاطئاً وضخماً فتُرجع الاستعلامات كل الصفوف تقريباً بدل 30 فقط
-        const pageNum = parseInt(page, 10) || 1;
-        const limitNum = parseInt(limit, 10) || 30;
+        // ✅ تحويل page و limit إلى أرقام صريحة + سقف للحجم (الحد الأقصى MAX_PAGE_SIZE)
+        // بدون التحويل، "from + limit - 1" ينفذ جمع نصوص بدل جمع أرقام من الصفحة الثانية.
+        const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+        const limitNum = Math.min(Math.max(parseInt(limit, 10) || 30, 1), MAX_PAGE_SIZE);
         const from = (pageNum - 1) * limitNum;
         const to = from + limitNum - 1;
-        query = query.order('created_at', { ascending: false }).range(from, to);
 
-        const { data, count, error: fetchError } = await query;
-        if (fetchError) throw fetchError;
+        let students = [];
+        let total = 0;
 
-        const formattedData = data.map(u => ({
-            ...u,
-            device_linked: u.devices && u.devices.length > 0
-        }));
+        if (search && search.trim() !== '') {
+            // ✅ مسار البحث العام (يبحث في جميع الطلاب بالمنصة — مطابقة دقيقة فقط)
+            const term = sanitizeSearchTerm(search);
 
-        // 👑 للقائد فقط: شجرة كورسات الفريق كاملة (مع موادها ومدرس كل كورس)
-        // ليستخدمها الفرونت إند في بناء نافذة المنح الجماعي + قائمة الباقات،
-        // بدلاً من الاعتماد على /api/dashboard/teacher/content (خاص بكورسات
-        // هذا المدرس فقط ولا يعرف شيئاً عن الفريق).
-        let teamCourses = [];
-        let teamPackages = [];
-        if (teamCtx.isLeader && teamCtx.team) {
-            const teacherNameById = new Map(teamCtx.teamTeachers.map(t => [t.id, t.name]));
-            teamCourses = teamCtx.courses.map(c => ({
-                id: c.id,
-                title: c.title,
-                teacher_id: c.teacher_id,
-                teacher_name: teacherNameById.get(c.teacher_id) || '—',
-                subjects: teamCtx.subjects
-                    .filter(s => s.course_id === c.id)
-                    .map(s => ({ id: s.id, title: s.title })),
-            }));
-            teamPackages = await getTeamPackages(teamCtx.team.id);
+            if (term) {
+                // الإيميل يُحفظ دائماً بحروف صغيرة (signup/verify-otp/...)، فالمطابقة بـ eq على
+                // النص الصغير تكفي وتغني عن ilike الذي كان يعامل % و _ و * كرموز بحث شاملة
+                // (فكان البحث بـ "%" يُرجع كل طلاب المنصة).
+                let orQuery = `first_name.eq.${term},username.eq.${term},phone.eq.${term},email.eq.${term.toLowerCase()}`;
+                if (/^\d+$/.test(term) && term.length <= 15) {
+                    orQuery += `,id.eq.${term}`;
+                }
+
+                // devices(id) فقط لمعرفة هل الجهاز مربوط — لا نجلب/نُرسل بصمات الأجهزة للمتصفح
+                const { data, count, error: fetchError } = await supabase
+                    .from('users')
+                    .select('id, first_name, username, phone, email, created_at, is_blocked, is_admin, devices(id)', { count: 'exact' })
+                    .eq('role', 'student')
+                    .or(orQuery)
+                    .order('created_at', { ascending: false })
+                    .order('id', { ascending: false })
+                    .range(from, to);
+                if (fetchError) throw fetchError;
+
+                students = (data || []).map(({ devices, ...u }) => ({
+                    ...u,
+                    device_linked: !!(devices && devices.length > 0)
+                }));
+                total = count || 0;
+            }
+        } else {
+            // ✅ المسار الافتراضي (بدون بحث): طلاب هذا المدرس فقط (أو كل الفريق للقائد)
+            const filterCourseIds = toIntList(courses_filter);
+            const filterSubjectIds = toIntList(subjects_filter);
+            const filterRequested = !!courses_filter || !!subjects_filter;
+
+            // طُلبت فلترة لكن كل المعرفات غير صالحة -> لا نتائج (بدل إرجاع القائمة بلا فلتر)
+            if (!(filterRequested && filterCourseIds.length === 0 && filterSubjectIds.length === 0)) {
+                // ⚡ استعلام واحد داخل Postgres: يحدد الطلاب + يطبق الفلاتر (AND/OR) + يرتب
+                // + يقتطع الصفحة + يحسب الإجمالي. يُستدعى عبر POST body فلا توجد حدود لطول الرابط.
+                const { data: rpcData, error: rpcError } = await supabase.rpc('get_teacher_students_page', {
+                    p_course_ids: myCourseIds,
+                    p_subject_ids: mySubjectIds,
+                    p_filter_course_ids: filterCourseIds,
+                    p_filter_subject_ids: filterSubjectIds,
+                    p_filter_mode: filter_mode === 'and' ? 'and' : 'or',
+                    p_limit: limitNum,
+                    p_offset: from
+                });
+                if (rpcError) throw rpcError;
+
+                students = rpcData?.students || [];
+                total = Number(rpcData?.total) || 0;
+            }
         }
 
-        return res.status(200).json({ 
-            students: formattedData, 
-            total: count || 0,
+        const payload = {
+            students,
+            total,
             isMainAdmin: false,
             isLeader: teamCtx.isLeader,
             teamName: teamCtx.team?.name || null,
-            teamTeachers: teamCtx.isLeader ? teamCtx.teamTeachers : [],
-            teamCourses,
-            teamPackages: stripReportPrices(teamPackages)
-        });
+            teamTeachers: teamCtx.isLeader ? teamCtx.teamTeachers : []
+        };
+
+        // 👑 للقائد فقط: شجرة كورسات الفريق كاملة + الباقات (لنافذة المنح الجماعي والفلترة).
+        // ⚡ هذه البيانات لا تتغير بين الصفحات، فالفرونت إند يطلبها مرة واحدة فقط ثم يرسل
+        // skip_team_meta=1 في باقي الطلبات لتوفير استعلامات getTeamPackages عند كل تنقل.
+        // (بدون الباراميتر يبقى السلوك القديم: تُرسل دائماً)
+        if (req.query.skip_team_meta !== '1') {
+            let teamCourses = [];
+            let teamPackages = [];
+            if (teamCtx.isLeader && teamCtx.team) {
+                const teacherNameById = new Map(teamCtx.teamTeachers.map(t => [t.id, t.name]));
+                const subjectsByCourse = new Map();
+                for (const sub of teamCtx.subjects) {
+                    if (!subjectsByCourse.has(sub.course_id)) subjectsByCourse.set(sub.course_id, []);
+                    subjectsByCourse.get(sub.course_id).push({ id: sub.id, title: sub.title });
+                }
+                teamCourses = teamCtx.courses.map(c => ({
+                    id: c.id,
+                    title: c.title,
+                    teacher_id: c.teacher_id,
+                    teacher_name: teacherNameById.get(c.teacher_id) || '—',
+                    subjects: subjectsByCourse.get(c.id) || [],
+                }));
+                teamPackages = await getTeamPackages(teamCtx.team.id);
+            }
+            payload.teamCourses = teamCourses;
+            payload.teamPackages = stripReportPrices(teamPackages);
+        }
+
+        return res.status(200).json(payload);
 
     } catch (err) {
         return res.status(500).json({ error: err.message });
@@ -313,23 +284,26 @@ export default async (req, res) => {
   // 3. معالجة طلبات POST (الإجراءات)
   // ---------------------------------------------------------
   if (req.method === 'POST') {
-      const { action, userIds, userId, grantList } = req.body;
-      const targetIds = userIds || (userId ? [userId] : []);
+      const { action, userIds, userId, grantList } = req.body || {};
 
-      const myStudentIds = await getMyStudentIds();
-      const safeMyIds = myStudentIds.map(String);
-      
-      // ✅ 🔒 الحماية الصارمة: المدرس يمكنه فقط منح الصلاحيات للطلاب (حتى لو لم يكونوا طلابه بعد)
-      // أما الإجراءات الأخرى فلا تتم إلا على الطلاب الذين يمتلكون كورساته بالفعل (safeMyIds)
-      const isAuthorized = targetIds.every(id => safeMyIds.includes(String(id)) || action === 'grant_access'); 
-
-      if (!isAuthorized && action !== 'grant_access') {
-          return res.status(403).json({ error: 'عذراً، هذا الإجراء مسموح فقط على طلابك.' });
-      }
-
+      // 🔒 المسموح فقط: منح الصلاحيات وسحبها (لا تعديل لبيانات الطلاب ولا حظر)
       if (action !== 'grant_access' && action !== 'revoke_access') {
           return res.status(403).json({ error: 'عذراً، غير مصرح لك بتعديل بيانات الطلاب الأساسية أو حظرهم.' });
       }
+
+      const rawTargets = Array.isArray(userIds) ? userIds : (userId ? [userId] : []);
+      const targetIds = [...new Set(rawTargets.filter(id => id !== null && id !== undefined && id !== ''))];
+      if (targetIds.length === 0) {
+          return res.status(400).json({ error: 'لم يتم تحديد أي طالب.' });
+      }
+      if (targetIds.length > MAX_BULK_TARGETS) {
+          return res.status(400).json({ error: `الحد الأقصى ${MAX_BULK_TARGETS} طالب في العملية الواحدة.` });
+      }
+
+      // ⚡ لا نجلب قائمة "طلابي" هنا إطلاقاً (كانت getMyStudentIds تُنفَّذ مع كل POST):
+      //   • grant_access: كان الفحص يُتجاوز أصلاً (سماح للمدرس بمنح أي طالب) فكانت النتيجة تُهدر.
+      //   • revoke_access: الحذف نفسه مقيّد بـ course_id/subject_id يملكها المدرس (يُتحقق منها
+      //     أدناه)، فلا يمكنه المساس بصلاحيات أي مدرس آخر حتى لو أرسل معرفات طلاب عشوائية.
 
       try {
           // -- أ) منح صلاحيات (Grant) مع التحقق من التكرار --
@@ -508,17 +482,32 @@ export default async (req, res) => {
 
           // -- ب) سحب صلاحيات (Revoke) --
           if (action === 'revoke_access') {
-              const { courseId, subjectId } = req.body;
-              
-              // 🔒 حماية إضافية قبل الحذف للتأكد من ملكية المدرس للكورس/المادة
-              if (courseId && myCourseIds.includes(Number(courseId))) {
-                  await supabase.from('user_course_access').delete().in('user_id', targetIds).eq('course_id', courseId);
-              } else if (subjectId && mySubjectIds.includes(Number(subjectId))) {
-                  await supabase.from('user_subject_access').delete().in('user_id', targetIds).eq('subject_id', subjectId);
-              } else {
+              // يدعم عنصراً واحداً (courseId/subjectId — السلوك القديم) أو مصفوفات
+              // (courseIds/subjectIds) ليُنفَّذ السحب الجماعي بطلب واحد بدل طلب لكل كورس.
+              const { courseId, subjectId, courseIds, subjectIds } = req.body;
+              const wantedCourses = toIntList([...(Array.isArray(courseIds) ? courseIds : []), ...(courseId ? [courseId] : [])]);
+              const wantedSubjects = toIntList([...(Array.isArray(subjectIds) ? subjectIds : []), ...(subjectId ? [subjectId] : [])]);
+
+              // 🔒 حماية قبل الحذف: كل كورس/مادة مطلوبة يجب أن تكون ضمن محتوى هذا المدرس
+              const myCourseSet = new Set(myCourseIds.map(Number));
+              const mySubjectSet = new Set(mySubjectIds.map(Number));
+              const nothingRequested = wantedCourses.length === 0 && wantedSubjects.length === 0;
+              if (nothingRequested
+                  || wantedCourses.some(id => !myCourseSet.has(id))
+                  || wantedSubjects.some(id => !mySubjectSet.has(id))) {
                   return res.status(403).json({ error: 'لا تملك صلاحية على هذا المحتوى.' });
               }
-              
+
+              const [courseDel, subjectDel] = await Promise.all([
+                  wantedCourses.length
+                      ? supabase.from('user_course_access').delete().in('user_id', targetIds).in('course_id', wantedCourses)
+                      : Promise.resolve({ error: null }),
+                  wantedSubjects.length
+                      ? supabase.from('user_subject_access').delete().in('user_id', targetIds).in('subject_id', wantedSubjects)
+                      : Promise.resolve({ error: null })
+              ]);
+              if (courseDel.error || subjectDel.error) throw (courseDel.error || subjectDel.error);
+
               return res.status(200).json({ success: true, message: 'تم سحب الصلاحية.' });
           }
 
