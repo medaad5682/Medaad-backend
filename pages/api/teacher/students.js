@@ -34,54 +34,48 @@ export default async (req, res) => {
       }
 
       // 🅰️ الوضع الثاني: جلب الطلبات (Requests) مع الفلترة والصفحات
+      // ⛔ تم حذف المنطق القديم: كان يجلب *كل* صفوف subscription_requests على
+      // مستوى المنصة بأكملها لهذه الحالة (status)، ثم يفلترها في JS لتخص هذا
+      // المعلم فقط (بمطابقة teacher_id أو مسح requested_data)، ثم يقتطع صفحة
+      // من النتيجة بـ slice(). الآن الفلترة + الترقيم + العدّ كلها داخل
+      // Postgres عبر get_teacher_requests_page (انظر sql/teacher_requests_page.sql).
       if (mode === 'requests') {
-        // أ) نجلب أرقام الكورسات والمواد المملوكة للمعلم
+        // أ) نجلب أرقام الكورسات والمواد المملوكة للمعلم (لازمة فقط كحل احتياطي
+        // للطلبات القديمة التي لا تحمل teacher_id — انظر التعليق داخل الدالة)
         const { data: myCourses } = await supabase
           .from('courses')
           .select('id')
           .eq('teacher_id', teacherId);
-        
+
         const myCourseIds = myCourses?.map(c => c.id) || [];
 
         const { data: mySubjects } = await supabase
           .from('subjects')
           .select('id')
           .in('course_id', myCourseIds);
-          
+
         const mySubjectIds = mySubjects?.map(s => s.id) || [];
 
-        // ب) جلب الطلبات بناءً على حالتها (مقبولة، مرفوضة، قيد الانتظار)
-        const { data: allRequests, error: reqError } = await supabase
-          .from('subscription_requests')
-          .select('*')
-          .eq('status', status)
-          .order('created_at', { ascending: false });
-
-        if (reqError) throw reqError;
-
-        // ج) فلترة الطلبات لتشمل فقط محتوى هذا المعلم
-        const teacherRequests = allRequests.filter(req => {
-            // التوافقية مع التحديث الجديد إذا كان المعرف مسجلاً مباشرة
-            if (req.teacher_id === teacherId) return true;
-
-            const items = req.requested_data || [];
-            return items.some(item => {
-                if (item.type === 'course') return myCourseIds.includes(item.id);
-                if (item.type === 'subject') return mySubjectIds.includes(item.id);
-                return false;
-            });
-        });
-
-        // د) نظام الصفحات (Pagination) بمعدل 10 طلبات
-        const pageNum = parseInt(page);
-        const limitNum = parseInt(limit);
+        // ب) استعلام واحد داخل Postgres: يحدد طلبات هذا المعلم + يطبّق الحالة
+        // + يرتب + يقتطع الصفحة + يحسب الإجمالي — بدل تحميل طلبات المنصة كاملة.
+        const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+        const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
         const startIndex = (pageNum - 1) * limitNum;
-        const paginatedRequests = teacherRequests.slice(startIndex, startIndex + limitNum);
 
-        // ✅ إرجاع البيانات في شكل {data, count} لدعم عرض الصفحات
+        const { data: rpcData, error: rpcError } = await supabase.rpc('get_teacher_requests_page', {
+          p_teacher_id: teacherId,
+          p_course_ids: myCourseIds,
+          p_subject_ids: mySubjectIds,
+          p_status: status || null,
+          p_limit: limitNum,
+          p_offset: startIndex
+        });
+        if (rpcError) throw rpcError;
+
+        // ✅ إرجاع البيانات في نفس الشكل القديم {data, count} لدعم عرض الصفحات
         return res.status(200).json({
-           data: paginatedRequests,
-           count: teacherRequests.length
+           data: rpcData?.data || [],
+           count: Number(rpcData?.total) || 0
         });
       }
 

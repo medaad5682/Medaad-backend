@@ -3,6 +3,17 @@ import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
 import { buildGrantTimestamps, isExemptFromExpiry } from '../../../../lib/accessExpiryHelper';
 import bcrypt from 'bcryptjs'; // ✅ استخدام bcryptjs بناءً على طلبك
 
+// حد أقصى لحجم الصفحة (نفس القاعدة المستخدمة في لوحة المعلم)
+const MAX_PAGE_SIZE = 100;
+
+// "1,2,x,3" -> [1,2,3]  (أرقام صحيحة موجبة فقط، بدون تكرار)
+const toIntList = (raw) => [...new Set(
+  String(Array.isArray(raw) ? raw.join(',') : (raw ?? ''))
+    .split(',')
+    .map(v => Number(v.trim()))
+    .filter(n => Number.isSafeInteger(n) && n > 0)
+)];
+
 export default async function handler(req, res) {
   // 1. التحقق من صلاحية السوبر أدمن
   const authResult = await requireSuperAdmin(req, res);
@@ -67,112 +78,46 @@ export default async function handler(req, res) {
     // ---------------------------------------------------------
     // B. جلب قائمة المستخدمين (للجدول الرئيسي)
     // ---------------------------------------------------------
+    // ⛔ تم حذف منطق الفلترة القديم: كان يجلب *كل* صفوف user_course_access/
+    // user_subject_access لكل كورس/مادة مطلوبة إلى ذاكرة السيرفر (حتى بدون
+    // أي فلتر صفحة)، وفي وضع AND كان يكرر ذلك استعلاماً مستقلاً لكل كورس على
+    // حدة، ثم يحسب التقاطع/الاتحاد في JS ويعيد إرسال آلاف المعرفات الناتجة
+    // داخل .in('id', [...]) في رابط الطلب. الآن كل ذلك (البحث + فلتر AND/OR +
+    // الترقيم + العدّ) ينفَّذ داخل Postgres عبر get_admin_students_page
+    // (انظر sql/admin_students_page.sql) باستخدام نفس فهارس user_*_access
+    // المُنشأة في migration الفريق التعليمي.
     try {
-      // ✅ إصلاح: تحويل page و limit إلى أرقام صريحة
-      // القيم القادمة من req.query هي نصوص (strings)، وبدون التحويل
-      // كان "from + limit - 1" ينفذ عملية جمع نصوص (concatenation) بدل الجمع الحسابي
-      // بداية من الصفحة الثانية، مما يجعل "to" رقماً ضخماً وخاطئاً (مثلاً 3029 بدل 59)
-      // فتُرجع الاستعلامات كل الصفوف تقريباً بدل 30 صف فقط، ويتكرر نفس المشكل مع كل صفحة
-      const pageNum = parseInt(page, 10) || 1;
-      const limitNum = parseInt(limit, 10) || 30;
+      // ✅ تحويل page و limit إلى أرقام صريحة + سقف لحجم الصفحة
+      const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+      const limitNum = Math.min(Math.max(parseInt(limit, 10) || 30, 1), MAX_PAGE_SIZE);
       const from = (pageNum - 1) * limitNum;
-      const to = from + limitNum - 1;
 
-      // بناء الاستعلام الأساسي
-      // ✅ التعديل: إزالة شرط الرتبة لجلب كافة المستخدمين (مدرسين، طلاب، مشرفين، إلخ)
-      let query = supabase
-        .from('users')
-        .select('id, first_name, username, phone, email, role, is_blocked, created_at, is_admin, devices(id, fingerprint)', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range(from, to);
+      const filterCourseIds = toIntList(courses_filter);
+      const filterSubjectIds = toIntList(subjects_filter);
+      const filterRequested = !!courses_filter || !!subjects_filter;
 
-      // تطبيق البحث
-      if (search) {
-        const term = search.trim();
-        let orQuery = `first_name.ilike.%${term}%,phone.ilike.%${term}%,username.ilike.%${term}%,email.ilike.%${term}%`;
-        if (/^\d+$/.test(term)) orQuery += `,id.eq.${term}`;
-        query = query.or(orQuery);
+      let students = [];
+      let total = 0;
+
+      // طُلبت فلترة لكن كل المعرفات غير صالحة -> لا نتائج (بدل إرجاع القائمة بلا فلتر)
+      if (!(filterRequested && filterCourseIds.length === 0 && filterSubjectIds.length === 0)) {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('get_admin_students_page', {
+          p_search: (search && search.trim() !== '') ? search.trim() : null,
+          p_filter_course_ids: filterCourseIds,
+          p_filter_subject_ids: filterSubjectIds,
+          p_filter_mode: filter_mode === 'and' ? 'and' : 'or',
+          p_limit: limitNum,
+          p_offset: from
+        });
+        if (rpcError) throw rpcError;
+
+        students = rpcData?.students || [];
+        total = Number(rpcData?.total) || 0;
       }
-
-      // تطبيق فلتر الكورسات والمواد مع دعم AND / OR
-      const hasCourseFilter = !!courses_filter;
-      const hasSubjectFilter = !!subjects_filter;
-
-      if (hasCourseFilter || hasSubjectFilter) {
-        const isAnd = filter_mode === 'and';
-
-        // جلب معرفات المستخدمين لكل كورس على حدة (AND: intersection / OR: union)
-        let courseUserSets = [];
-        if (hasCourseFilter) {
-          const courseIds = courses_filter.split(',');
-          if (isAnd) {
-            // AND: جلب كل كورس على حدة للتقاطع لاحقاً
-            for (const cid of courseIds) {
-              const { data } = await supabase.from('user_course_access').select('user_id').eq('course_id', cid);
-              courseUserSets.push(data?.map(u => u.user_id) || []);
-            }
-          } else {
-            // OR: جلب الكل دفعة واحدة
-            const { data } = await supabase.from('user_course_access').select('user_id').in('course_id', courseIds);
-            courseUserSets.push(data?.map(u => u.user_id) || []);
-          }
-        }
-
-        // جلب معرفات المستخدمين لكل مادة على حدة
-        let subjectUserSets = [];
-        if (hasSubjectFilter) {
-          const subjectIds = subjects_filter.split(',');
-          if (isAnd) {
-            for (const sid of subjectIds) {
-              const { data } = await supabase.from('user_subject_access').select('user_id').eq('subject_id', sid);
-              subjectUserSets.push(data?.map(u => u.user_id) || []);
-            }
-          } else {
-            const { data } = await supabase.from('user_subject_access').select('user_id').in('subject_id', subjectIds);
-            subjectUserSets.push(data?.map(u => u.user_id) || []);
-          }
-        }
-
-        const allSets = [...courseUserSets, ...subjectUserSets];
-
-        let finalUserIds;
-        if (isAnd) {
-          // AND: تقاطع جميع المجموعات — الطالب يجب أن يكون في كل مجموعة
-          if (allSets.length === 0) {
-            finalUserIds = [];
-          } else {
-            finalUserIds = allSets.reduce((acc, set) => acc.filter(id => set.includes(id)));
-          }
-        } else {
-          // OR: اتحاد جميع المجموعات — الطالب في أي مجموعة
-          const unionSet = new Set(allSets.flat());
-          finalUserIds = [...unionSet];
-        }
-
-        if (finalUserIds.length > 0) query = query.in('id', finalUserIds);
-        else query = query.eq('id', 0); // لا نتائج
-      }
-
-      const { data, count, error } = await query;
-
-      if (error) throw error;
-
-      // تنسيق البيانات
-      const formattedData = data.map(user => {
-          // التعامل مع مصفوفة الأجهزة
-          const hasDevice = user.devices && Array.isArray(user.devices) && user.devices.length > 0;
-          const mainDevice = hasDevice ? user.devices[0] : null;
-
-          return {
-            ...user,
-            device_linked: hasDevice,
-            device_id: mainDevice ? mainDevice.fingerprint : null 
-          };
-      });
 
       return res.status(200).json({
-        students: formattedData,
-        total: count,
+        students,
+        total,
         isMainAdmin: true // ✅ إضافة هذا العلم ليتمكن الفرونت إند من عرض الأزرار الإضافية (مثل الحذف النهائي)
       });
 

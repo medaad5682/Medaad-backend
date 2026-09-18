@@ -15,9 +15,10 @@ export default async function handler(req, res) {
     // ✅ نستقبل teacherId مع باقي المعاملات
     const { status, page = 1, limit = 10, teacherId } = req.query;
 
-    // تحويل القيم إلى أرقام لحساب النطاق
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
+    // ✅ حماية: تحويل صريح لأرقام صحيحة + سقف لحجم الصفحة (بدونه، limit ضخم
+    // قادم من الطلب كان يجعل .range() يجلب آلاف الصفوف دفعة واحدة)
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
     const start = (pageNum - 1) * limitNum;
     const end = start + limitNum - 1;
 
