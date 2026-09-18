@@ -507,7 +507,7 @@ export default function ContentManager() {
           });
           const data = await res.json();
           if (res.ok) { 
-              showAlert('success', 'تمت العملية بنجاح'); 
+              showAlert('success', data.message || 'تمت العملية بنجاح'); 
               setModalType(null); 
               await refreshView(); 
           }

@@ -100,6 +100,11 @@ export default async function handler(req, res) {
 
         results.push({ courseId: course.id, title: result.courseTitle, status: 'deleted ✅' });
         console.log(`✅ [scheduled-course-deletion] Deleted course "${result.courseTitle}" (id=${course.id})`);
+        if (result.packageWarning) {
+          // لا يوجد أحد ليرى تنبيهاً هنا (الحذف تلقائي وغير مراقب) — لكن الأرشفة
+          // التلقائية للباقات الفارغة تمت بالفعل داخل deepDeleteCourse نفسها.
+          console.log(`📦 [scheduled-course-deletion] ${result.packageWarning}`);
+        }
 
       } catch (courseErr) {
         console.error(`⚠️ [scheduled-course-deletion] Failed for course id=${course.id}:`, courseErr.message);

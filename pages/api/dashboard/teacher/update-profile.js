@@ -1,6 +1,7 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { BASE_URL } from '../../../../lib/config'; // ✅ استيراد ملف الإعدادات
+import { getTeacherTeamContext } from '../../../../lib/teamHelper'; // 👥 شارة الفريق/القائد في لوحة المدرس
 import bcrypt from 'bcryptjs';
 
 export default async (req, res) => {
@@ -55,6 +56,10 @@ export default async (req, res) => {
       // د) تجهيز هيكل بيانات الدفع
       const paymentDetails = teacher.payment_details || {};
 
+      // 👥 شارة الفريق (اسم الفريق + هل هذا المدرس قائده) — تُستخدم في TeacherLayout
+      // لعرض شارة بجانب اسم المدرس. مدرس بلا فريق يحصل على null/false كما كان تماماً.
+      const teamCtx = await getTeacherTeamContext(auth.teacherId);
+
       return res.status(200).json({
         success: true,
         data: {
@@ -71,7 +76,9 @@ export default async (req, res) => {
             cash_numbers: paymentDetails.cash_numbers || [],
             instapay_numbers: paymentDetails.instapay_numbers || [],
             instapay_links: paymentDetails.instapay_links || [] 
-          }
+          },
+          team_name: teamCtx.team?.name || null,
+          is_team_leader: teamCtx.isLeader
         }
       });
 

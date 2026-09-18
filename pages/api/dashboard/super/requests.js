@@ -1,6 +1,7 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
 import { buildGrantTimestamps, isExemptFromExpiry } from '../../../../lib/accessExpiryHelper';
+import { attachCourseOwnerTeachers } from '../../../../lib/requestOwnerHelper';
 
 export default async function handler(req, res) {
   // 1. التحقق من صلاحية السوبر أدمن
@@ -46,8 +47,12 @@ export default async function handler(req, res) {
 
       if (error) throw error;
 
+      // ✅ إضافة معلومة "المدرس صاحب الكورس" الفعلي (قد يختلف عن teacher_id
+      // الخاص بصاحب الطلب في حالة باقات قائد الفريق) دون المساس بمنطق الملكية
+      const enrichedData = await attachCourseOwnerTeachers(data);
+
       // إرجاع البيانات
-      return res.status(200).json({ data, count });
+      return res.status(200).json({ data: enrichedData, count });
 
     } catch (err) {
       console.error("Fetch Error:", err);

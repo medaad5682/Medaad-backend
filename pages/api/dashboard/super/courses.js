@@ -202,9 +202,26 @@ async function setScheduledDeletion(req, res) {
   if (error) throw error;
   if (!data) return res.status(404).json({ error: 'الكورس غير موجود' });
 
+  let message = value ? `تم جدولة حذف "${data.title}" بتاريخ ${value}` : `تم إلغاء جدولة حذف "${data.title}"`;
+
+  // 📦 تحذير غير مانع: هذا الكورس ضمن باقة/باقات — سيؤدي حذفه لاحقاً (تلقائياً
+  // عبر الـ cron) لإزالته منها، وقد يُفرغها تماماً فتُؤرشف تلقائياً حينها.
+  // نُعلم السوبر أدمن الآن فقط، عند الجدولة نفسها — لا أحد سيرى تنبيهاً وقت
+  // التنفيذ الفعلي لأنه غير مراقب.
+  if (value) {
+    const { data: pkgItems, error: pkgError } = await supabase
+      .from('course_package_items')
+      .select('course_packages(title)')
+      .eq('course_id', courseId);
+    if (!pkgError && pkgItems && pkgItems.length > 0) {
+      const titles = pkgItems.map(i => i.course_packages?.title).filter(Boolean).join('، ');
+      message += ` ⚠️ تنبيه: هذا الكورس ضمن باقة/باقات (${titles}) — سيُزال منها عند الحذف الفعلي، وقد تُؤرشف الباقة تلقائياً إن أصبحت بلا كورسات.`;
+    }
+  }
+
   return res.status(200).json({
     success: true,
-    message: value ? `تم جدولة حذف "${data.title}" بتاريخ ${value}` : `تم إلغاء جدولة حذف "${data.title}"`,
+    message,
     course: data,
   });
 }

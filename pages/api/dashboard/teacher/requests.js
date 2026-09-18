@@ -3,6 +3,7 @@ import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { notifyStudentSubscriptionDecision } from '../../../../lib/notifyHelper';
 import { buildGrantTimestamps, isExemptFromExpiry } from '../../../../lib/accessExpiryHelper';
+import { attachCourseOwnerTeachers } from '../../../../lib/requestOwnerHelper';
 
 export default async (req, res) => {
   const { user, error } = await requireTeacherOrAdmin(req, res);
@@ -39,10 +40,15 @@ export default async (req, res) => {
       if (fetchError) throw fetchError;
 
       // ✅ التعديل الجديد: تجهيز البيانات وإضافة مؤشر `has_discount` للتسهيل على واجهة العرض
-      const enrichedData = data.map(request => ({
+      const withDiscountFlag = data.map(request => ({
           ...request,
           has_discount: request.actual_paid_price !== null && request.actual_paid_price < request.total_price
       }));
+
+      // ✅ إضافة معلومة "المدرس صاحب الكورس" الفعلي (قد يختلف عن قائد الفريق
+      // الذي يظهر الطلب تحت حسابه) دون المساس بمنطق ملكية الطلب (لا يزال
+      // مفلتراً بـ teacher_id كما هو الحال الآن)
+      const enrichedData = await attachCourseOwnerTeachers(withDiscountFlag);
 
       return res.status(200).json({ data: enrichedData, count });
     } catch (err) {

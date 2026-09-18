@@ -142,6 +142,7 @@ export default function SuperFinance() {
             <thead>
               <tr>
                 <th>المدرس</th>
+                <th>الفريق</th>
                 <th>طريقة الاحتساب</th>
                 <th>عدد العمليات</th>
                 <th>المبيعات الافتراضية</th>
@@ -157,6 +158,7 @@ export default function SuperFinance() {
                 return `
                 <tr>
                   <td><strong>${t.name}</strong></td>
+                  <td>${t.team_name ? `${t.team_role === 'leader' ? '👑' : '👥'} ${t.team_name}` : '—'}</td>
                   <td><span style="display:inline-block; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:bold; color:#fff; background:${methodChipColor}; -webkit-print-color-adjust:exact;">${methodBadgeText(t)}</span></td>
                   <td>${t.transaction_count}</td>
                   <td style="color:#888; ${hasCustom ? 'text-decoration:line-through;' : ''}">${t.original_sales.toLocaleString()}</td>
@@ -222,6 +224,13 @@ export default function SuperFinance() {
             ? `عمولة منصة مداد (سعر ثابت — ${unpriced} عنصر بدون سعر)`
             : 'عمولة منصة مداد (سعر ثابت للكورس)';
         }
+
+        // ── تفكيك الرسوم إلى كورسات/مواد منفردة مقابل باقات، فقط لو
+        // كانت هناك باقات مُفعّلة فعلاً في الفترة (وإلا العرض عادي) ──
+        const coursesFee = round0(meta.courses_fee);
+        const packagesFee = round0(meta.packages_fee);
+        const packagesCount = meta.packages_count || 0;
+        const hasPackages = billingMethod === 'course_price' && packagesCount > 0;
 
         // ── تجهيز تفاصيل كل طلب حسب الطريقة (لعمود "تفاصيل العمولة") ──
         // method 2: هل كان الطالب جديداً وقت هذا الطلب بالذات؟
@@ -407,6 +416,11 @@ export default function SuperFinance() {
                     <div class="icn">%</div>
                     <div class="label">${commissionLabel}</div>
                     <div class="value red">${fmt(platformShare)} ج.م</div>
+                    ${hasPackages ? `
+                    <div class="subline">
+                      <span class="ok">🏷️ كورسات: ${fmt(coursesFee)} ج.م</span>
+                      <span class="no" style="color:#7c3aed;">📦 ${packagesCount} باقة: ${fmt(packagesFee)} ج.م</span>
+                    </div>` : ''}
                   </div>
                   <div class="card">
                     <div class="icn">🛒</div>
@@ -499,7 +513,9 @@ export default function SuperFinance() {
                            const items = rowMeta?.items || [];
                            const itemLines = items.map(it => {
                              const priced = it.applied_report_price !== null && it.applied_report_price !== undefined;
-                             return `<span class="course-line"><span class="dot-ic">🏷️</span>${it.title || (it.type === 'course' ? 'كورس' : 'مادة')}: ${priced ? `${fmt(it.applied_report_price)} ج.م` : 'بدون سعر'}</span>`;
+                             const icon = it.type === 'package' ? '📦' : '🏷️';
+                             const fallbackLabel = it.type === 'package' ? 'باقة' : (it.type === 'course' ? 'كورس' : 'مادة');
+                             return `<span class="course-line"><span class="dot-ic">${icon}</span>${it.title || fallbackLabel}: ${priced ? `${fmt(it.applied_report_price)} ج.م` : 'بدون سعر'}</span>`;
                            }).join('') || '—';
                            commissionDetailCell = `<td>${itemLines}</td>`;
                          }
@@ -683,7 +699,14 @@ export default function SuperFinance() {
                         const methodBadge = getMethodBadge(teacher);
                         return (
                         <tr key={teacher.id}>
-                          <td style={{fontWeight:'700', color:'var(--text-primary)'}}>{teacher.name}</td>
+                          <td style={{fontWeight:'700', color:'var(--text-primary)'}}>
+                            {teacher.name}
+                            {teacher.team_name && (
+                              <span className={`team-badge ${teacher.team_role === 'leader' ? 'leader' : ''}`}>
+                                {teacher.team_role === 'leader' ? '👑' : '👥'} {teacher.team_name}
+                              </span>
+                            )}
+                          </td>
                           <td>
                             <span className={methodBadge.className}>{methodBadge.text}</span>
                           </td>
@@ -830,6 +853,15 @@ export default function SuperFinance() {
         .method-new-student { background: rgba(96, 165, 250, 0.1); color: #60a5fa; border-color: rgba(96, 165, 250, 0.25); }
         .method-course-price { background: rgba(167, 139, 250, 0.1); color: #a78bfa; border-color: rgba(167, 139, 250, 0.25); }
         .method-course-price.warning { background: rgba(248, 113, 113, 0.1); color: #f87171; border-color: rgba(248, 113, 113, 0.25); }
+
+        /* ── TEAM / LEADER BADGE (next to teacher name, overview table) ── */
+        .team-badge {
+          display: inline-flex; align-items: center; gap: 4px;
+          font-size: 0.72rem; font-weight: 700; padding: 2px 9px;
+          border-radius: 20px; white-space: nowrap; margin-inline-start: 8px;
+          background: rgba(167, 139, 250, 0.1); color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.25);
+        }
+        .team-badge.leader { background: var(--gold-dim); color: var(--gold); border-color: var(--border-accent); }
 
         /* ── TABLE CONTAINER ── */
         .table-container { 

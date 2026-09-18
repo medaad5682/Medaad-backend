@@ -178,11 +178,13 @@ export default function SuperCoursesPage() {
   const submitScheduledDeletion = async () => {
     if (!deletionTarget) return;
     const iso = deletionDateInput ? new Date(deletionDateInput).toISOString() : null;
+    // لا نمرر رسالة ثابتة هنا: الباك إند قد يُلحق تحذيراً (باقة ستتأثر) برسالته،
+    // ونريد لهذا التحذير أن يظهر بدل أن يُستبدل برسالة عامة.
     await callCoursesApi({
       action: 'set_scheduled_deletion',
       courseId: deletionTarget.id,
       scheduledDeletionAt: iso,
-    }, `تم تحديث موعد الحذف لكورس "${deletionTarget.title}"`);
+    });
     setDeletionTarget(null);
   };
 

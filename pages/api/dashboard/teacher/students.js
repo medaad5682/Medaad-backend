@@ -1,6 +1,22 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { buildGrantTimestamps, isExemptFromExpiry } from '../../../../lib/accessExpiryHelper';
+import { getTeacherTeamContext, getTeamPackages } from '../../../../lib/teamHelper';
+import { grantPackagesToUsers } from '../../../../lib/grantHelper';
+
+// 🔒 سعر التقرير (report_price) بيانات مالية داخلية — لا تُرسل لمتصفح المدرس/القائد.
+// نحذفه من الباقة ومن كل كورس بداخلها قبل الإرسال. (منطق المنح في السيرفر
+// يجلب الباقات من getTeamPackages مباشرة ولا يتأثر بهذا الحذف.)
+const stripReportPrices = (packages = []) => (packages || []).map(pkg => {
+    const { report_price, ...pkgRest } = pkg;
+    return {
+        ...pkgRest,
+        courses: (pkg.courses || []).map(c => {
+            const { report_price: _rp, ...courseRest } = c;
+            return courseRest;
+        })
+    };
+});
 
 export default async (req, res) => {
   // 1. التحقق من الصلاحية وجلب بيانات المدرس
@@ -9,43 +25,70 @@ export default async (req, res) => {
 
   const teacherId = user.teacherId;
 
-  // -- خطوة أ: جلب معرفات المحتوى الخاص بالمدرس (للتأكد من الملكية وللقوائم) --
-  // 1. جلب كورسات المدرس
-  const { data: myCourses } = await supabase
-    .from('courses')
-    .select('id, title')
-    .eq('teacher_id', teacherId);
-    
-  const myCourseIds = myCourses?.map(c => c.id) || [];
+  // 👥 سياق الفريق: القائد يرى ويدير كورسات كل مدرسي الفريق. مبيعات أي عضو
+  // (حتى لو كانت كورسه الخاص) تُسجَّل تحت رصيد القائد في التقرير المالي.
+  // مدرس بلا فريق، أو عضو عادي (غير قائد) -> يحصل بالضبط على نفس السلوك القديم.
+  const teamCtx = await getTeacherTeamContext(teacherId);
 
-  // 2. جلب المواد التابعة لكورسات المدرس
-  const { data: mySubjects } = await supabase
-    .from('subjects')
-    .select('id, title, course_id')
-    .in('course_id', myCourseIds);
-    
-  const mySubjectIds = mySubjects?.map(s => s.id) || [];
+  // ⚡ تحسين أداء: بدل استدعاء resolveBillingTeacherId() (استعلامين إضافيين
+  // يعيدان جلب نفس صف teachers/teacher_teams اللذين جلبهما getTeacherTeamContext
+  // للتو) نشتق نفس النتيجة من teamCtx مباشرة — بدون أي استعلام إضافي.
+  // (نفس القاعدة القديمة تماماً: عضو غير قائد -> معرف القائد، غير ذلك -> معرفه هو)
+  const billingTeacherId = (teamCtx.inTeam && !teamCtx.isLeader && teamCtx.team?.leader_teacher_id)
+    ? teamCtx.team.leader_teacher_id
+    : teacherId;
+
+  // -- خطوة أ: جلب معرفات المحتوى الخاص بالمدرس (للتأكد من الملكية وللقوائم) --
+  // 👑 قائد الفريق: "كورساتي/موادي" تشمل كورسات ومواد كل مدرسي الفريق (جاهزة
+  // بالفعل داخل teamCtx). ⚡ تحسين أداء: لا نجلب كورسات/مواد المدرس الخاصة به
+  // منفصلة في هذه الحالة (كانت تُجلب دائماً ثم تُهدر فوراً لصالح teamCtx).
+  let myCourses, myCourseIds, mySubjects, mySubjectIds;
+
+  if (teamCtx.isLeader) {
+    myCourses = teamCtx.courses.map(c => ({ id: c.id, title: c.title, teacher_id: c.teacher_id }));
+    myCourseIds = teamCtx.courseIds;
+    mySubjects = teamCtx.subjects;
+    mySubjectIds = teamCtx.subjectIds;
+  } else {
+    const { data: ownCourses } = await supabase
+      .from('courses')
+      .select('id, title, teacher_id')
+      .eq('teacher_id', teacherId);
+
+    myCourses = ownCourses || [];
+    myCourseIds = myCourses.map(c => c.id);
+
+    const { data: ownSubjects } = await supabase
+      .from('subjects')
+      .select('id, title, course_id')
+      .in('course_id', myCourseIds);
+
+    mySubjects = ownSubjects || [];
+    mySubjectIds = mySubjects.map(s => s.id);
+  }
+
+  // اختياري: فلترة إضافية على مدرس واحد داخل الفريق (لقائمة الطلاب الافتراضية)
+  if (teamCtx.isLeader && req.query?.teacher_filter) {
+    const tId = req.query.teacher_filter;
+    myCourseIds = myCourses.filter(c => String(c.teacher_id) === String(tId)).map(c => c.id);
+    mySubjectIds = mySubjects.filter(s => myCourseIds.includes(s.course_id)).map(s => s.id);
+  }
 
   // دالة مساعدة: جلب معرفات الطلاب المشتركين عند هذا المدرس فقط
+  // ⚡ تحسين أداء: الاستعلامان (كورسات/مواد) مستقلان تماماً، فننفذهما بالتوازي
+  // بدل التتابع (Promise.all) — نفس عدد الاستعلامات، لكن بنصف زمن الانتظار تقريباً.
   const getMyStudentIds = async () => {
-      // المشتركين في الكورسات
-      const { data: cUsers } = await supabase
-          .from('user_course_access')
-          .select('user_id')
-          .in('course_id', myCourseIds);
-          
-      // المشتركين في المواد
-      const { data: sUsers } = await supabase
-          .from('user_subject_access')
-          .select('user_id')
-          .in('subject_id', mySubjectIds);
+      const [{ data: cUsers }, { data: sUsers }] = await Promise.all([
+          supabase.from('user_course_access').select('user_id').in('course_id', myCourseIds),
+          supabase.from('user_subject_access').select('user_id').in('subject_id', mySubjectIds)
+      ]);
 
       // دمج المعرفات وحذف التكرار
       const ids = new Set([
           ...(cUsers?.map(x => x.user_id) || []),
           ...(sUsers?.map(x => x.user_id) || [])
       ]);
-      
+
       return Array.from(ids);
   };
 
@@ -92,11 +135,24 @@ export default async (req, res) => {
                 return !isOwned && !isParentCourseOwned;
             });
 
+            // 📦 باقات الفريق المتاحة لهذا الطالب (للقائد فقط). نخفي الباقة فقط لو
+            // كان الطالب يملك بالفعل كل كورساتها — نفس قاعدة grantPackagesToUsers.
+            let availablePackages = [];
+            if (teamCtx.isLeader && teamCtx.team) {
+                const teamPackages = await getTeamPackages(teamCtx.team.id);
+                availablePackages = teamPackages.filter(pkg =>
+                    (pkg.courses || []).some(c => !ownedCourseIds.includes(c.id))
+                );
+            }
+
             return res.status(200).json({ 
                 courses: userCourses || [], 
                 subjects: userSubjects || [],
                 available_courses: availableCourses,
-                available_subjects: availableSubjects
+                available_subjects: availableSubjects,
+                is_leader: teamCtx.isLeader,
+                team_teachers: teamCtx.isLeader ? teamCtx.teamTeachers : [],
+                available_packages: stripReportPrices(availablePackages)
             });
         }
 
@@ -129,33 +185,51 @@ export default async (req, res) => {
 
             if (hasCourseFilter || hasSubjectFilter) {
                 const isAnd = filter_mode === 'and';
+                const filterCourseIds = hasCourseFilter ? courses_filter.split(',') : [];
+                const filterSubjectIds = hasSubjectFilter ? subjects_filter.split(',') : [];
+
+                // ⚡ تحسين أداء: كان وضع "AND" ينفذ استعلاماً منفصلاً لكل معرف كورس/مادة
+                // (N استعلام)؛ الآن استعلام واحد فقط لكل نوع (يجلب user_id + course_id/
+                // subject_id معاً) ثم يُجمَّع محلياً حسب المعرف، مع تنفيذ استعلامي
+                // الكورسات والمواد بالتوازي بدل التتابع.
+                const [courseRowsRes, subjectRowsRes] = await Promise.all([
+                    hasCourseFilter
+                        ? supabase.from('user_course_access').select('user_id, course_id').in('course_id', filterCourseIds)
+                        : Promise.resolve({ data: [] }),
+                    hasSubjectFilter
+                        ? supabase.from('user_subject_access').select('user_id, subject_id').in('subject_id', filterSubjectIds)
+                        : Promise.resolve({ data: [] })
+                ]);
 
                 // جمع مجموعات المستخدمين لكل فلتر
                 let courseUserSets = [];
                 if (hasCourseFilter) {
-                    const filterCourseIds = courses_filter.split(',');
+                    const courseRows = courseRowsRes.data || [];
                     if (isAnd) {
-                        for (const cid of filterCourseIds) {
-                            const { data } = await supabase.from('user_course_access').select('user_id').eq('course_id', cid);
-                            courseUserSets.push(data?.map(x => x.user_id) || []);
+                        // مجموعة مستقلة لكل كورس مطلوب (سيتم تقاطعها لاحقاً)
+                        const byCourse = new Map(filterCourseIds.map(cid => [String(cid), []]));
+                        for (const row of courseRows) {
+                            const key = String(row.course_id);
+                            if (byCourse.has(key)) byCourse.get(key).push(row.user_id);
                         }
+                        courseUserSets = Array.from(byCourse.values());
                     } else {
-                        const { data } = await supabase.from('user_course_access').select('user_id').in('course_id', filterCourseIds);
-                        courseUserSets.push(data?.map(x => x.user_id) || []);
+                        courseUserSets = [courseRows.map(r => r.user_id)];
                     }
                 }
 
                 let subjectUserSets = [];
                 if (hasSubjectFilter) {
-                    const filterSubjectIds = subjects_filter.split(',');
+                    const subjectRows = subjectRowsRes.data || [];
                     if (isAnd) {
-                        for (const sid of filterSubjectIds) {
-                            const { data } = await supabase.from('user_subject_access').select('user_id').eq('subject_id', sid);
-                            subjectUserSets.push(data?.map(x => x.user_id) || []);
+                        const bySubject = new Map(filterSubjectIds.map(sid => [String(sid), []]));
+                        for (const row of subjectRows) {
+                            const key = String(row.subject_id);
+                            if (bySubject.has(key)) bySubject.get(key).push(row.user_id);
                         }
+                        subjectUserSets = Array.from(bySubject.values());
                     } else {
-                        const { data } = await supabase.from('user_subject_access').select('user_id').in('subject_id', filterSubjectIds);
-                        subjectUserSets.push(data?.map(x => x.user_id) || []);
+                        subjectUserSets = [subjectRows.map(r => r.user_id)];
                     }
                 }
 
@@ -199,10 +273,35 @@ export default async (req, res) => {
             device_linked: u.devices && u.devices.length > 0
         }));
 
+        // 👑 للقائد فقط: شجرة كورسات الفريق كاملة (مع موادها ومدرس كل كورس)
+        // ليستخدمها الفرونت إند في بناء نافذة المنح الجماعي + قائمة الباقات،
+        // بدلاً من الاعتماد على /api/dashboard/teacher/content (خاص بكورسات
+        // هذا المدرس فقط ولا يعرف شيئاً عن الفريق).
+        let teamCourses = [];
+        let teamPackages = [];
+        if (teamCtx.isLeader && teamCtx.team) {
+            const teacherNameById = new Map(teamCtx.teamTeachers.map(t => [t.id, t.name]));
+            teamCourses = teamCtx.courses.map(c => ({
+                id: c.id,
+                title: c.title,
+                teacher_id: c.teacher_id,
+                teacher_name: teacherNameById.get(c.teacher_id) || '—',
+                subjects: teamCtx.subjects
+                    .filter(s => s.course_id === c.id)
+                    .map(s => ({ id: s.id, title: s.title })),
+            }));
+            teamPackages = await getTeamPackages(teamCtx.team.id);
+        }
+
         return res.status(200).json({ 
             students: formattedData, 
             total: count || 0,
-            isMainAdmin: false 
+            isMainAdmin: false,
+            isLeader: teamCtx.isLeader,
+            teamName: teamCtx.team?.name || null,
+            teamTeachers: teamCtx.isLeader ? teamCtx.teamTeachers : [],
+            teamCourses,
+            teamPackages: stripReportPrices(teamPackages)
         });
 
     } catch (err) {
@@ -235,11 +334,32 @@ export default async (req, res) => {
       try {
           // -- أ) منح صلاحيات (Grant) مع التحقق من التكرار --
           if (action === 'grant_access') {
-              const { courses = [], subjects = [] } = grantList || {};
+              const { courses = [], subjects = [], packages = [] } = grantList || {};
               
               // 🔒 فلترة البيانات القادمة من الفرونت إند لضمان أنها تخص هذا المدرس فقط
-              const safeCourses = courses.filter(id => myCourseIds.includes(Number(id)) || myCourseIds.includes(String(id)));
+              let safeCourses = courses.filter(id => myCourseIds.includes(Number(id)) || myCourseIds.includes(String(id)));
               const safeSubjects = subjects.filter(id => mySubjectIds.includes(Number(id)) || mySubjectIds.includes(String(id)));
+
+              // -- تجهيز الباقات المختارة أولاً (قبل معالجة الكورسات المفردة) --
+              // متاحة فقط لقائد الفريق
+              let chosenPackages = [];
+              if (packages.length > 0) {
+                  if (!teamCtx.isLeader) {
+                      return res.status(403).json({ error: 'تفعيل الباقات متاح فقط لقائد الفريق.' });
+                  }
+                  const teamPackages = await getTeamPackages(teamCtx.team.id);
+                  chosenPackages = teamPackages.filter(p => packages.map(String).includes(String(p.id)));
+              }
+
+              // 🛡️ منع ازدواجية طلب الاشتراك: لو اختار القائد باقة وكورساً منفرداً
+              // موجوداً بالفعل داخل تلك الباقة، لا نُنشئ طلب اشتراك/منح صلاحية
+              // مستقل لهذا الكورس — الباقة وحدها هي من تتكفل بمنحه وتسجيل طلبه.
+              if (chosenPackages.length > 0) {
+                  const packageCourseIds = new Set(
+                      chosenPackages.flatMap(p => (p.courses || []).map(c => String(c.id)))
+                  );
+                  safeCourses = safeCourses.filter(id => !packageCourseIds.has(String(id)));
+              }
 
               // 🛑 1. جلب الصلاحيات الموجودة مسبقاً لمنع التكرار
               const existingCourseMap = new Set();
@@ -269,13 +389,16 @@ export default async (req, res) => {
               // 2. جلب تفاصيل المحتوى (للسعر والعنوان)
               let courseInfos = [];
               if (safeCourses.length > 0) {
-                  const { data } = await supabase.from('courses').select('id, title, price').in('id', safeCourses);
+                  // ✅ teacher_id هنا هو المالك الفعلي للكورس (قد يختلف عن billingTeacherId
+                  // حين يمنح القائد كورس عضو آخر في الفريق) — يُخزَّن كـ owner_teacher_id
+                  // في requested_data لأغراض التدقيق فقط، ولا يُستخدم في الفوترة.
+                  const { data } = await supabase.from('courses').select('id, title, price, teacher_id').in('id', safeCourses);
                   courseInfos = data || [];
               }
 
               let subjectInfos = [];
               if (safeSubjects.length > 0) {
-                  const { data } = await supabase.from('subjects').select('id, title, price, courses(title)').in('id', safeSubjects);
+                  const { data } = await supabase.from('subjects').select('id, title, price, courses(title, teacher_id)').in('id', safeSubjects);
                   subjectInfos = data || [];
               }
 
@@ -308,7 +431,7 @@ export default async (req, res) => {
                       if (cInfo) {
                           reqInserts.push({
                               user_id: uid,
-                              teacher_id: teacherId,
+                              teacher_id: billingTeacherId,
                               status: 'approved',
                               total_price: cInfo.price || 0,
                               user_name: user.first_name,
@@ -316,7 +439,8 @@ export default async (req, res) => {
                               phone: user.phone,
                               course_title: cInfo.title,
                               requested_data: [{
-                                  id: cid, type: 'course', title: cInfo.title, price: cInfo.price || 0
+                                  id: cid, type: 'course', title: cInfo.title, price: cInfo.price || 0,
+                                  owner_teacher_id: cInfo.teacher_id ?? null
                               }],
                               user_note: 'تم التفعيل يدوياً من قائمة الطلاب'
                           });
@@ -335,7 +459,7 @@ export default async (req, res) => {
                            const title = `${sInfo.title} (${sInfo.courses?.title})`;
                            reqInserts.push({
                               user_id: uid,
-                              teacher_id: teacherId,
+                              teacher_id: billingTeacherId,
                               status: 'approved',
                               total_price: sInfo.price || 0,
                               user_name: user.first_name,
@@ -343,7 +467,8 @@ export default async (req, res) => {
                               phone: user.phone,
                               course_title: title,
                               requested_data: [{
-                                  id: sid, type: 'subject', title: title, price: sInfo.price || 0
+                                  id: sid, type: 'subject', title: title, price: sInfo.price || 0,
+                                  owner_teacher_id: sInfo.courses?.teacher_id ?? null
                               }],
                               user_note: 'تم التفعيل يدوياً من قائمة الطلاب'
                           });
@@ -361,11 +486,24 @@ export default async (req, res) => {
               if (cInserts.length) await supabase.from('user_course_access').upsert(cInserts, { onConflict: 'user_id, course_id' });
               if (sInserts.length) await supabase.from('user_subject_access').upsert(sInserts, { onConflict: 'user_id, subject_id' });
               
-              const msg = reqInserts.length === 0 && cInserts.length === 0 && sInserts.length === 0
+              // -- ج) تفعيل باقات (Packages) — متاح فقط لقائد الفريق (تم التحقق والجلب أعلاه) --
+              let packageResult = { requestsInserted: 0, coursesGranted: 0, alreadyOwnedCount: 0 };
+              if (chosenPackages.length > 0) {
+                  packageResult = await grantPackagesToUsers({
+                      targetIds,
+                      packages: chosenPackages,
+                      billingTeacherId,
+                      usersData: usersData || [],
+                  });
+              }
+
+              const nothingHappened = reqInserts.length === 0 && cInserts.length === 0 && sInserts.length === 0
+                && packageResult.requestsInserted === 0 && packageResult.coursesGranted === 0;
+              const msg = nothingHappened
                 ? 'جميع الطلاب المحددين يمتلكون هذه الصلاحيات بالفعل.' 
                 : 'تم منح الصلاحيات وتسجيل العمليات بنجاح.';
 
-              return res.status(200).json({ success: true, message: msg });
+              return res.status(200).json({ success: true, message: msg, packages: packageResult });
           }
 
           // -- ب) سحب صلاحيات (Revoke) --

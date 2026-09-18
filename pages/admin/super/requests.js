@@ -338,7 +338,22 @@ export default function SuperRequestsPage() {
                                     <span className="value ltr">{req.phone}</span>
                                 </div>
                             </div>
-                            
+
+                            <div className="info-row">
+                                <div className="info-col">
+                                    <span className="label flex-center gap-1"><IconUser /> اسم مستخدم الطالب</span>
+                                    <span className="value ltr">{req.user_username || '—'}</span>
+                                </div>
+                                <div className="info-col right">
+                                    <span className="label flex-center gap-1"><IconTeacher /> مدرس الكورس</span>
+                                    <span className="value">
+                                        {req.course_owner_teachers && req.course_owner_teachers.length > 0
+                                            ? req.course_owner_teachers.join('، ')
+                                            : '—'}
+                                    </span>
+                                </div>
+                            </div>
+
                             {/* ✅ قسم عرض السعر الجديد (الأصلي + المعدل) */}
                             <div className="price-box">
                                 <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-start'}}>

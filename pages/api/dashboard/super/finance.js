@@ -1,6 +1,7 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
 import { getGlobalPlatformPercentage, computeTeacherBilling } from '../../../../lib/teacherBillingHelper';
+import { getTeamBadgesForTeachers } from '../../../../lib/teamHelper';
 
 // ✅ دالة ذكية لحساب فرق التوقيت لمصر بناءً على التاريخ (تدعم الصيفي والشتوي)
 const getEgyptOffset = (dateString) => {
@@ -94,7 +95,7 @@ export default async function handler(req, res) {
       .map(t => t.teacher_profile_id)
       .filter(id => id !== null && id !== undefined);
 
-    const [{ data: teacherConfigs, error: configsError }, { data: allRequests, error: allRequestsError }] = await Promise.all([
+    const [{ data: teacherConfigs, error: configsError }, { data: allRequests, error: allRequestsError }, teamBadgeById] = await Promise.all([
       teacherProfileIds.length
         ? supabase
             .from('teachers')
@@ -114,6 +115,9 @@ export default async function handler(req, res) {
             return q;
           })()
         : Promise.resolve({ data: [] }),
+      // 👥 شارة الفريق (قائد/عضو + اسم الفريق) لكل مدرس دفعة واحدة، بدلاً من
+      // استعلام منفصل لكل مدرس — راجع lib/teamHelper.js
+      getTeamBadgesForTeachers(teacherProfileIds),
     ]);
 
     if (configsError) throw configsError;
@@ -142,7 +146,12 @@ export default async function handler(req, res) {
             net_profit: 0,
             billing_method: 'percentage',
             custom_percentage: null,
-            new_student_price: null
+            new_student_price: null,
+            courses_fee: 0,
+            packages_fee: 0,
+            packages_count: 0,
+            team_name: null,
+            team_role: null,
          };
       }
 
@@ -165,6 +174,8 @@ export default async function handler(req, res) {
         log('RESULT', `Teacher: ${teacher.first_name} | Method: ${billing.billing_method} | Original: ${billing.original_amount} | Actual: ${billing.actual_amount} | Fee: ${billing.platform_fee}`);
       }
 
+      const badge = teamBadgeById.get(teacher.teacher_profile_id) || null;
+
       return {
         id: teacher.id, // نُعيد ID المستخدم للفرونت إند لغرض العرض والروابط
         name: teacher.first_name || teacher.admin_username || 'مدرس غير معروف',
@@ -178,7 +189,15 @@ export default async function handler(req, res) {
         custom_percentage: billing.meta.effective_percentage !== undefined ? billing.meta.effective_percentage * 100 : null,
         new_student_price: billing.meta.new_student_price ?? null,
         new_student_count: billing.meta.new_student_count ?? null,
-        unpriced_items_count: billing.meta.unpriced_items_count ?? null
+        unpriced_items_count: billing.meta.unpriced_items_count ?? null,
+        // 👇 تفصيل عمولة "سعر ثابت للكورس" بين الكورسات/المواد المفردة
+        // والباقات — راجع lib/teacherBillingHelper.js
+        courses_fee: billing.meta.courses_fee ?? null,
+        packages_fee: billing.meta.packages_fee ?? null,
+        packages_count: billing.meta.packages_count ?? null,
+        // 👥 شارة الفريق — null لمدرس بلا فريق (لا تغيير عن اليوم)
+        team_name: badge?.teamName ?? null,
+        team_role: badge ? (badge.isLeader ? 'leader' : 'member') : null,
       };
     });
 

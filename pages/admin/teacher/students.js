@@ -21,6 +21,15 @@ export default function StudentsPage() {
   // حالة لمعرفة هل المستخدم الحالي هو الأدمن الرئيسي
   const [isMainAdmin, setIsMainAdmin] = useState(false);
 
+  // 👑 حالة الفريق (تُملأ فقط إذا كان المدرس قائد فريق — غير ذلك تبقى فارغة
+  // ويعمل كل شيء بنفس السلوك القديم تماماً)
+  const [isLeader, setIsLeader] = useState(false);
+  const [teamName, setTeamName] = useState(null);
+  const [teamTeachers, setTeamTeachers] = useState([]);
+  const [teamCourses, setTeamCourses] = useState([]); // شجرة كورسات الفريق كاملة (بديل allCourses للقائد)
+  const [teamPackages, setTeamPackages] = useState([]);
+  const [teacherFilterId, setTeacherFilterId] = useState(''); // فلترة القائد لقائمة الطلاب حسب مدرس معين
+
   // البحث والفلترة
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -42,12 +51,13 @@ export default function StudentsPage() {
   const [userSubs, setUserSubs] = useState({ courses: [], subjects: [] });
   const [loadingSubs, setLoadingSubs] = useState(false);
 
-  // متغير لتخزين الكورسات والمواد المتاحة للمنح (خاصة بهذا المدرس فقط)
-  const [grantOptions, setGrantOptions] = useState({ courses: [], subjects: [] });
+  // متغير لتخزين الكورسات والمواد والباقات المتاحة للمنح
+  // (خاصة بهذا المدرس فقط — أو بكل الفريق إن كان قائداً)
+  const [grantOptions, setGrantOptions] = useState({ courses: [], subjects: [], packages: [] });
 
   const [showGrantModal, setShowGrantModal] = useState(false);
   const [grantTarget, setGrantTarget] = useState(null);
-  const [selectedGrantItems, setSelectedGrantItems] = useState({ courses: [], subjects: [] });
+  const [selectedGrantItems, setSelectedGrantItems] = useState({ courses: [], subjects: [], packages: [] });
 
   const [confirmData, setConfirmData] = useState({ show: false, message: '', onConfirm: null });
   const [toast, setToast] = useState({ show: false, message: '', type: '' });
@@ -88,6 +98,7 @@ export default function StudentsPage() {
         if (activeFilters.courses.length > 0) params.append('courses_filter', activeFilters.courses.join(','));
         if (activeFilters.subjects.length > 0) params.append('subjects_filter', activeFilters.subjects.join(','));
         if (activeFilters.courses.length + activeFilters.subjects.length > 1) params.append('filter_mode', filterMode);
+        if (teacherFilterId) params.append('teacher_filter', teacherFilterId);
 
         if (params.toString()) url += `&${params.toString()}`;
 
@@ -98,6 +109,11 @@ export default function StudentsPage() {
             setStudents(data.students || []);
             setTotalStudents(data.total || 0);
             setIsMainAdmin(data.isMainAdmin || false);
+            setIsLeader(data.isLeader || false);
+            setTeamName(data.teamName || null);
+            setTeamTeachers(data.teamTeachers || []);
+            setTeamCourses(data.teamCourses || []);
+            setTeamPackages(data.teamPackages || []);
             setSelectedUsers([]);
         }
     } catch (err) { console.error(err); }
@@ -107,7 +123,7 @@ export default function StudentsPage() {
   useEffect(() => {
       setCurrentUserId(localStorage.getItem('admin_user_id'));
       fetchData();
-  }, [currentPage, activeFilters, filterMode]);
+  }, [currentPage, activeFilters, filterMode, teacherFilterId]);
 
   const handleSearchKey = (e) => {
       if (e.key === 'Enter') {
@@ -128,7 +144,8 @@ export default function StudentsPage() {
 
           setGrantOptions({
               courses: data.available_courses || [],
-              subjects: data.available_subjects || []
+              subjects: data.available_subjects || [],
+              packages: data.available_packages || []
           });
       } catch (e) {}
       setLoadingSubs(false);
@@ -162,7 +179,7 @@ export default function StudentsPage() {
   // --- منطق المنح (Grant) ---
   const openGrantModal = (target) => {
       setGrantTarget(target);
-      setSelectedGrantItems({ courses: [], subjects: [] });
+      setSelectedGrantItems({ courses: [], subjects: [], packages: [] });
       setShowGrantModal(true);
   };
   const toggleGrantItem = (type, id) => {
@@ -171,7 +188,9 @@ export default function StudentsPage() {
       setSelectedGrantItems({ ...selectedGrantItems, [type]: newList });
   };
   const submitGrant = () => {
-      if (!selectedGrantItems.courses.length && !selectedGrantItems.subjects.length) return showToast("اختر شيئاً واحداً على الأقل", 'error');
+      if (!selectedGrantItems.courses.length && !selectedGrantItems.subjects.length && !selectedGrantItems.packages.length) {
+          return showToast("اختر شيئاً واحداً على الأقل", 'error');
+      }
       const isBulk = grantTarget === 'bulk';
       runApiCall('grant_access', { userIds: isBulk ? selectedUsers : [grantTarget.id], grantList: selectedGrantItems }, false);
       setShowGrantModal(false);
@@ -197,7 +216,12 @@ export default function StudentsPage() {
   const handleBulkAction = (actionType) => {
       if (!selectedUsers.length) return;
       if (actionType === 'grant') {
-          setGrantOptions({ courses: allCourses, subjects: [] });
+          // 👑 للقائد: كل كورسات ومواد وباقات الفريق متاحة للمنح الجماعي.
+          // غير ذلك (السلوك القديم): كورسات هذا المدرس فقط.
+          setGrantOptions(isLeader
+              ? { courses: teamCourses, subjects: [], packages: teamPackages }
+              : { courses: allCourses, subjects: [], packages: [] }
+          );
           openGrantModal('bulk');
       }
       else if (actionType === 'revoke_filtered') {
@@ -212,9 +236,14 @@ export default function StudentsPage() {
   const totalPages = Math.ceil(totalStudents / itemsPerPage);
   const hasActiveFilters = activeFilters.courses.length > 0 || activeFilters.subjects.length > 0;
 
-  // --- دالة مساعدة لتجهيز قائمة المنح (مقيّدة بمحتوى هذا المدرس فقط) ---
+  // 👑 شجرة الكورسات المستخدمة لبناء نوافذ المنح/الفلترة: كورسات هذا المدرس
+  // فقط عادةً، أو شجرة كورسات الفريق كاملة إن كان قائداً — بدون أي تغيير
+  // على allCourses نفسها أو على الصفحات الأخرى التي قد تستخدمها.
+  const courseTree = isLeader ? teamCourses : allCourses;
+
+  // --- دالة مساعدة لتجهيز قائمة المنح (مقيّدة بمحتوى هذا المدرس فقط، أو بالفريق كاملاً للقائد) ---
   const getRenderableGrantGroups = () => {
-    return allCourses.filter(course => {
+    return courseTree.filter(course => {
         if (grantTarget === 'bulk') return true;
         const isCourseAvailable = grantOptions.courses.some(c => c.id === course.id);
         const hasSubjectsAvailable = course.subjects?.some(s => grantOptions.subjects.some(gs => gs.id === s.id));
@@ -232,10 +261,28 @@ export default function StudentsPage() {
           <div className="title-icon"><StudentsIcon /></div>
           <div>
             <h1>إدارة الطلاب</h1>
-            <p>تصفح طلابك، تحكم في الصلاحيات، وتابع الحالات.</p>
+            <p>
+              {isLeader
+                ? <>👑 أنت قائد فريق "{teamName}" — تصفح طلاب كل مدرسي الفريق، وفعّل باقاتهم.</>
+                : 'تصفح طلابك، تحكم في الصلاحيات، وتابع الحالات.'}
+            </p>
           </div>
         </div>
       </div>
+
+      {isLeader && teamTeachers.length > 0 && (
+          <div className="controls-container" style={{marginBottom: '10px'}}>
+              <select
+                  className="search-input"
+                  style={{flex: 'none', minWidth: '220px', padding: '10px 12px'}}
+                  value={teacherFilterId}
+                  onChange={e => { setTeacherFilterId(e.target.value); setCurrentPage(1); }}
+              >
+                  <option value="">كل مدرسي الفريق</option>
+                  {teamTeachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+          </div>
+      )}
 
       <div className="controls-container">
           <div className="search-wrapper">
@@ -353,11 +400,11 @@ export default function StudentsPage() {
                               </button>
                           </div>
                       </div>
-                      {allCourses.map(course => (
+                      {courseTree.map(course => (
                           <div key={course.id} className="filter-group">
                               <label className="checkbox-row main">
                                   <input type="checkbox" checked={tempFilters.courses.includes(String(course.id))} onChange={() => toggleTempFilter('courses', String(course.id))} />
-                                  <span>📦 {course.title}</span>
+                                  <span>📦 {course.title}{isLeader && <span className="badge-owned">{course.teacher_name}</span>}</span>
                               </label>
                               <div className="filter-subs">
                                   {course.subjects?.map(subject => (
@@ -369,7 +416,7 @@ export default function StudentsPage() {
                               </div>
                           </div>
                       ))}
-                      {allCourses.length === 0 && <p className="empty-text">لا توجد كورسات متاحة للفلترة</p>}
+                      {courseTree.length === 0 && <p className="empty-text">لا توجد كورسات متاحة للفلترة</p>}
                   </div>
                   <div className="modal-footer" style={{justifyContent: 'space-between'}}>
                       <button className="cancel-btn danger-text" onClick={() => { setTempFilters({courses:[], subjects:[]}); setActiveFilters({courses:[], subjects:[]}); setTempFilterMode('or'); setFilterMode('or'); setCurrentPage(1); setShowFilterModal(false); }}>مسح الفلاتر</button>
@@ -483,7 +530,7 @@ export default function StudentsPage() {
                                   {isCourseGrantable ? (
                                       <label className="checkbox-row main">
                                           <input type="checkbox" checked={selectedGrantItems.courses.includes(course.id)} onChange={() => toggleGrantItem('courses', course.id)} />
-                                          <span>📦 {course.title} (كامل)</span>
+                                          <span>📦 {course.title} (كامل){isLeader && <span className="badge-owned">{course.teacher_name}</span>}</span>
                                       </label>
                                   ) : (
                                       <div className="checkbox-row main disabled-row">
@@ -502,7 +549,49 @@ export default function StudentsPage() {
                               </div>
                           );
                       }) : (
+                          renderableGrantGroups.length === 0 && grantOptions.packages?.length === 0 && grantTarget !== 'bulk' &&
                           <p className="empty-text">لا توجد صلاحيات جديدة يمكن إضافتها.</p>
+                      )}
+
+                      {/* 👑 باقات الفريق — تظهر فقط لقائد الفريق */}
+                      {isLeader && (grantTarget === 'bulk' ? teamPackages.length > 0 : grantOptions.packages?.length > 0) && (
+                          <div className="course-group">
+                              <div className="checkbox-row main" style={{borderBottom: 'none', marginBottom: '10px', paddingBottom: '0'}}>
+                                  <span>📦 باقات الفريق</span>
+                              </div>
+                              {(grantTarget === 'bulk' ? teamPackages : grantOptions.packages).map(pkg => {
+                                  const pkgCourses = pkg.courses || [];
+                                  const pkgPrice = pkg.price ?? pkgCourses.reduce((sum, c) => sum + (Number(c.price) || 0), 0);
+                                  return (
+                                      <label key={pkg.id} className="checkbox-row sub package-row">
+                                          <input type="checkbox" checked={selectedGrantItems.packages.includes(pkg.id)} onChange={() => toggleGrantItem('packages', pkg.id)} />
+                                          <div className="package-info">
+                                              <div className="package-head">
+                                                  <span className="package-title">📦 باقة: {pkg.title}</span>
+                                                  <span className="package-meta">{pkgCourses.length} كورس • السعر: {pkgPrice}</span>
+                                              </div>
+                                              {/* 📋 محتوى الباقة: الكورسات المتضمنة */}
+                                              <div className="package-content-label">محتوى الباقة:</div>
+                                              {pkgCourses.length > 0 ? (
+                                                  <ul className="package-content-list">
+                                                      {pkgCourses.map(c => {
+                                                          const tName = teamTeachers.find(t => t.id === c.teacher_id)?.name;
+                                                          return (
+                                                              <li key={c.id}>
+                                                                  <span>{c.title}</span>
+                                                                  {tName && <span className="badge-owned">{tName}</span>}
+                                                              </li>
+                                                          );
+                                                      })}
+                                                  </ul>
+                                              ) : (
+                                                  <span className="package-empty">لا توجد كورسات داخل هذه الباقة.</span>
+                                              )}
+                                          </div>
+                                      </label>
+                                  );
+                              })}
+                          </div>
                       )}
                   </div>
                   <div className="modal-footer"><button className="cancel-btn" onClick={() => setShowGrantModal(false)}>إلغاء</button><button className="confirm-btn" onClick={submitGrant}>تأكيد ✅</button></div>
@@ -622,6 +711,19 @@ export default function StudentsPage() {
         .checkbox-row.sub:hover { border-color: var(--gold); color: var(--text-primary); }
 
         .filter-subs { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+
+        /* 📦 Package rows (leader grant modal) */
+        .package-row { width: 100%; justify-content: flex-start; align-items: flex-start; margin-bottom: 10px; }
+        .package-row input[type="checkbox"] { margin-top: 4px; flex-shrink: 0; }
+        .package-info { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+        .package-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+        .package-title { font-weight: 700; color: var(--text-primary); }
+        .package-meta { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
+        .package-content-label { font-size: 0.78rem; color: var(--text-muted); font-weight: 700; }
+        .package-content-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+        .package-content-list li { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--text-secondary); }
+        .package-content-list li::before { content: '•'; color: var(--gold); }
+        .package-empty { font-size: 0.85rem; color: var(--text-muted); }
 
         .badge-owned { font-size: 0.75rem; background: var(--bg-surface); color: var(--text-muted); padding: 2px 8px; border-radius: 12px; margin-right: 6px; border: 1px solid var(--border); font-weight: 600; }
 

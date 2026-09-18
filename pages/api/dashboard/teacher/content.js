@@ -415,7 +415,7 @@ export default async (req, res) => {
             if (!result.success) {
                return res.status(404).json({ error: result.error || 'تعذر حذف الكورس.' });
             }
-            return res.status(200).json({ success: true });
+            return res.status(200).json({ success: true, message: result.packageWarning || undefined });
          } else if (type === 'exams') {
              const { data: exam } = await supabase.from('exams').select('subjects(courses(teacher_id))').eq('id', id).single();
              const teacherId = exam?.subjects?.courses?.teacher_id;

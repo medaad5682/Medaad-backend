@@ -19,6 +19,8 @@ export default function TeacherLayout({ children, title }) {
   const [isChecking, setIsChecking] = useState(true);
   const [adminName, setAdminName] = useState('');
   const [profileImage, setProfileImage] = useState(null); 
+  // 👥 شارة الفريق/القائد (فارغة لمدرس بلا فريق — نفس السلوك القديم تماماً)
+  const [teamBadge, setTeamBadge] = useState(null); // { name, isLeader } | null
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isDark, setIsDark] = useState(true);
 
@@ -76,6 +78,9 @@ export default function TeacherLayout({ children, title }) {
                 if (profileData.success && profileData.data && profileData.data.profile_image) {
                     setProfileImage(profileData.data.profile_image);
                     localStorage.setItem('admin_avatar', profileData.data.profile_image);
+                }
+                if (profileData.success && profileData.data && profileData.data.team_name) {
+                    setTeamBadge({ name: profileData.data.team_name, isLeader: !!profileData.data.is_team_leader });
                 }
             })
             .catch(err => console.error("Error fetching profile image:", err));
@@ -167,6 +172,11 @@ export default function TeacherLayout({ children, title }) {
                 )}
               </div>
               <span className="admin-name">{adminName}</span>
+              {teamBadge && (
+                <span className={`team-badge-chip ${teamBadge.isLeader ? 'leader' : ''}`}>
+                  {teamBadge.isLeader ? '👑' : '👥'} {teamBadge.name}
+                </span>
+              )}
             </div>
           )}
 
@@ -370,6 +380,15 @@ export default function TeacherLayout({ children, title }) {
           font-weight: 600;
           font-size: 0.9rem;
         }
+
+        /* ── TEAM / LEADER BADGE (next to the teacher's name, header chip) ── */
+        .team-badge-chip {
+          display: inline-flex; align-items: center; gap: 4px;
+          font-size: 0.72rem; font-weight: 700; padding: 2px 9px;
+          border-radius: 20px; white-space: nowrap; margin-inline-start: 4px;
+          background: rgba(167, 139, 250, 0.1); color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.25);
+        }
+        .team-badge-chip.leader { background: var(--gold-dim); color: var(--gold); border-color: var(--border-accent); }
 
         .theme-toggle {
           background: var(--gold-dimmer);
