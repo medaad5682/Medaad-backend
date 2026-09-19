@@ -75,9 +75,8 @@ export default async function handler(req, res) {
         studentsResult, 
         teachersResult, 
         coursesResult, 
-        revenueRpcResult,
+        profitReportResult, // ⚡ تقرير أرباح المنصة (يدعم كل طرق الحساب الثلاث + الباقات) — يغطي البطاقة والرسم البياني معاً
         recentUsersResult,
-        chartDataResult, // استعلام الرسم البياني للمبيعات
         dailyStatsResult // ✅ استعلام إحصائيات النشاط اليومي
     ] = await Promise.all([
       // 1. إجمالي الطلاب
@@ -89,8 +88,11 @@ export default async function handler(req, res) {
       // 3. الكورسات النشطة
       supabase.from('courses').select('*', { count: 'exact', head: true }),
 
-      // 4. إجمالي المبيعات الفعلية المُحصلة (RPC) — نفس دالة صفحة المالية بدلاً من السعر الافتراضي
-      supabase.rpc('get_total_actual_revenue'),
+      // 4. ✅ أرباح المنصة الفعلية (إجمالي كل التاريخ + تفصيل آخر 7 أيام)
+      // يحسب لكل طلب نصيب المنصة الحقيقي حسب طريقة حساب معلمه (نسبة / طالب جديد /
+      // سعر ثابت لكل عنصر بما فيها تفعيل الباقات) بدل جمع سعر الطلب الخام —
+      // راجع sql/platform_profit_report.sql وlib/teacherBillingHelper.js لنفس المنطق.
+      supabase.rpc('get_platform_profit_report', { p_start: null, p_end: null }),
 
       // 5. أحدث المسجلين
       supabase
@@ -99,16 +101,7 @@ export default async function handler(req, res) {
         .order('created_at', { ascending: false })
         .limit(5),
 
-      // 6. بيانات الرسم البياني (أرباح الفترة المحددة)
-      // ✅ نجلب actual_paid_price أيضاً لاستخدام السعر الفعلي المُحصل (وليس السعر الافتراضي فقط)
-      //    بنفس منطق صفحة المالية (finance.js) بدلاً من total_price دائماً
-      supabase
-        .from('subscription_requests')
-        .select('created_at, total_price, actual_paid_price')
-        .eq('status', 'approved')
-        .gte('created_at', dateLimit),
-
-      // 7. ✅ جلب إحصائيات النشاط اليومي بناءً على التاريخ المحلي لتجنب فقدان أي يوم
+      // 6. ✅ جلب إحصائيات النشاط اليومي بناءً على التاريخ المحلي لتجنب فقدان أي يوم
       supabase
         .from('daily_user_stats')
         .select('record_date, active_users_today')
@@ -116,31 +109,29 @@ export default async function handler(req, res) {
         .order('record_date', { ascending: false })
     ]);
 
-    // --- معالجة الأرباح الكلية ---
-    // ✅ نعتمد على المبلغ الفعلي المُحصل (actual_paid_price) وليس السعر الافتراضي فقط
-    //    بنفس منطق صفحة المالية (finance.js / get_total_actual_revenue)
-    let totalRevenue = 0;
-    if (!revenueRpcResult.error) {
-      totalRevenue = revenueRpcResult.data || 0;
-    } else {
-      // حساب احتياطي في حال فشل الـ RPC
-      const { data: manualData } = await supabase
-        .from('subscription_requests')
-        .select('total_price, actual_paid_price')
-        .eq('status', 'approved');
-      totalRevenue = manualData?.reduce((acc, curr) => {
-        const priceToUse = (curr.actual_paid_price !== null && curr.actual_paid_price !== undefined)
-            ? curr.actual_paid_price
-            : curr.total_price;
-        return acc + (Number(priceToUse) || 0);
-      }, 0) || 0;
-    }
+    if (profitReportResult.error) throw profitReportResult.error;
+
+    // ✅ استعلام ثانٍ منفصل: نفس التقرير لكن مقيّد بآخر 7 أيام فقط، لتغذية
+    // الرسم البياني بنفس منطق الحساب متعدد الطرق (نافذة زمنية مختلفة عن
+    // الإجمالي الكلي أعلاه، لذا يلزم استدعاء ثانٍ بحدود تاريخ مختلفة)
+    const { data: weeklyProfitData, error: weeklyProfitError } = await supabase.rpc('get_platform_profit_report', {
+      p_start: dateLimit,
+      p_end: null
+    });
+    if (weeklyProfitError) throw weeklyProfitError;
+
+    // --- إجمالي أرباح المنصة (كل الطرق مدمجة) ---
+    const totalRevenue = Number(profitReportResult.data?.total_platform_fee) || 0;
 
     // --- معالجة بيانات الرسوم البيانية ---
     const chartDataFinal = [];
     const activeUsersChartFinal = []; // ✅ مصفوفة بيانات رسم النشاط
 
-    const rawChartData = chartDataResult.data || [];
+    // ✅ أرباح كل يوم قادمة جاهزة من get_platform_profit_report (محسوبة حسب
+    // طريقة كل معلم)، مفهرسة بتاريخ القاهرة (YYYY-MM-DD) لسهولة المطابقة أدناه
+    const dailyProfitByDate = new Map(
+      (weeklyProfitData?.daily || []).map(d => [d.date, Number(d.platform_fee) || 0])
+    );
     const rawDailyStats = dailyStatsResult.data || [];
 
     // ✅ الترتيب: من 6 أيام للوراء تنازلياً وصولاً لليوم (لضبط اتجاه الرسم البياني من اليسار لليمين)
@@ -151,19 +142,10 @@ export default async function handler(req, res) {
         const dayName = getDayNameFromDateStr(targetDateStr);
 
         // ========================================================
-        // 💰 الجزء الخاص بالأرباح (تم تصحيحه ليعتمد على توقيت القاهرة بدلاً من UTC)
-        // ✅ نستخدم السعر الفعلي المُحصل (actual_paid_price) إن وُجد، وإلا نرجع
-        //    للسعر الافتراضي (total_price) — نفس منطق COALESCE المستخدم في صفحة المالية
+        // 💰 أرباح المنصة الفعلية لهذا اليوم (وليس مجموع أسعار الطلبات الخام)
         // ========================================================
-        const dayTotal = rawChartData
-            .filter(item => getCairoDateStr(new Date(item.created_at)) === targetDateStr)
-            .reduce((sum, item) => {
-                const priceToUse = (item.actual_paid_price !== null && item.actual_paid_price !== undefined)
-                    ? item.actual_paid_price
-                    : item.total_price;
-                return sum + (Number(priceToUse) || 0);
-            }, 0);
-            
+        const dayTotal = dailyProfitByDate.get(targetDateStr) || 0;
+
         chartDataFinal.push({ 
             name: i === 0 ? 'اليوم' : dayName,
             date: targetDateStr, 

@@ -53,7 +53,7 @@
 
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
-import { isAccessRowActive, recalculateExistingAccess } from '../../../../lib/accessExpiryHelper';
+import { buildActiveAccessFilter, recalculateExistingAccess } from '../../../../lib/accessExpiryHelper';
 
 export default async function handler(req, res) {
   const authResult = await requireSuperAdmin(req, res);
@@ -139,14 +139,16 @@ async function handleGetActiveCount(req, res) {
     const table = countType === 'subject' ? 'user_subject_access' : 'user_course_access';
     const column = countType === 'subject' ? 'subject_id' : 'course_id';
 
-    const { data: rows, error } = await supabase
+    // ⚡ عدّ مباشر داخل Postgres بدل تنزيل كل صفوف الكورس/المادة إلى الذاكرة
+    // لفلترة الصلاحيات المنتهية في JS — أهم لكورس/مادة شائعة بآلاف المشتركين.
+    const { count, error } = await supabase
       .from(table)
-      .select('expires_at')
-      .eq(column, countId);
+      .select('user_id', { count: 'exact', head: true })
+      .eq(column, countId)
+      .or(buildActiveAccessFilter());
     if (error) throw error;
 
-    const active_students = (rows || []).filter(isAccessRowActive).length;
-    return res.status(200).json({ active_students });
+    return res.status(200).json({ active_students: count || 0 });
   } catch (error) {
     console.error('❌ [dashboard/super/courses][GET count]', error.message);
     return res.status(500).json({ error: error.message });

@@ -1,6 +1,5 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { verifyTeacher } from '../../../lib/teacherAuth';
-import { isAccessRowActive } from '../../../lib/accessExpiryHelper';
 
 export default async (req, res) => {
   // 1. التحقق من أن المستخدم مدرس
@@ -41,56 +40,37 @@ export default async (req, res) => {
     }
 
     // =========================================================
-    // 3. جلب صلاحيات الوصول (مع فلترة الطلاب فقط)
+    // 3. حساب إحصائيات الطلاب (إجمالي + لكل كورس + لكل مادة)
     // =========================================================
-    
-    // أ. الطلاب المشتركون في الكورسات (Full Course)
-    // ✅ نستثني الصلاحيات المنتهية حتى لا يُحتسب طالب انتهى اشتراكه ضمن الإحصائيات
-    let courseAccess = [];
-    if (courseIds.length > 0) {
-      const { data: caData, error: caError } = await supabase
-        .from('user_course_access')
-        .select('course_id, user_id, expires_at, users!inner(role)') 
-        .in('course_id', courseIds)
-        .eq('users.role', 'student'); 
-      
-      if (caError) throw caError;
-      courseAccess = (caData || []).filter(isAccessRowActive);
-    }
+    // ⛔ تم حذف تنزيل كل صفوف user_course_access/user_subject_access إلى
+    // الذاكرة (وكانت أيضاً عرضة لحد PostgREST الافتراضي 1000 صف، فتُظهر
+    // عدداً أقل من الحقيقي لأي مدرس لديه أكثر من 1000 طالب). الحساب الآن
+    // بالكامل داخل Postgres عبر get_teacher_student_counts.
+    const { data: countsData, error: countsError } = await supabase.rpc('get_teacher_student_counts', {
+      p_course_ids: courseIds,
+      p_subject_ids: subjectIds
+    });
+    if (countsError) throw countsError;
 
-    // ب. الطلاب المشتركون في المواد (Single Subject)
-    let subjectAccess = [];
-    if (subjectIds.length > 0) {
-      const { data: saData, error: saError } = await supabase
-        .from('user_subject_access')
-        .select('subject_id, user_id, expires_at, users!inner(role)') 
-        .in('subject_id', subjectIds)
-        .eq('users.role', 'student'); 
-        
-      if (saError) throw saError;
-      subjectAccess = (saData || []).filter(isAccessRowActive);
-    }
+    const courseCountById = new Map((countsData?.courses  || []).map(c => [c.id, c.count]));
+    const subjectCountById = new Map((countsData?.subjects || []).map(s => [s.id, s.count]));
 
     // =========================================================
     // 4. معالجة بيانات الطلاب للإحصائيات
     // =========================================================
 
-    const coursesStats = courses.map(course => {
-      const count = courseAccess.filter(a => a.course_id === course.id).length;
-      return { title: course.title, count };
-    });
+    const coursesStats = courses.map(course => ({
+      title: course.title,
+      count: courseCountById.get(course.id) || 0
+    }));
 
-    const subjectsStats = subjects.map(subject => {
-      const count = subjectAccess.filter(a => a.subject_id === subject.id).length;
-      return { title: subject.title, count };
-    });
+    const subjectsStats = subjects.map(subject => ({
+      title: subject.title,
+      count: subjectCountById.get(subject.id) || 0
+    }));
 
     // حساب إجمالي الطلاب (بدون تكرار)
-    const allStudentIds = new Set([
-      ...courseAccess.map(a => a.user_id),
-      ...subjectAccess.map(a => a.user_id)
-    ]);
-    const totalUniqueStudents = allStudentIds.size;
+    const totalUniqueStudents = countsData?.total_unique_students || 0;
 
     // =========================================================
     // 5. حساب الأرباح (باستخدام الدالة حصراً)
@@ -126,4 +106,4 @@ export default async (req, res) => {
     console.error("Financial Stats Error:", err.message);
     return res.status(500).json({ error: err.message });
   }
-};
+}; 

@@ -1,6 +1,5 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
-import { isAccessRowActive } from '../../../../lib/accessExpiryHelper';
 
 // ============================================================
 // ✅ أدوات التوقيت الخاصة بمصر (نفس المنطق المستخدم في super/stats.js)
@@ -42,29 +41,12 @@ const getDayNameFromDateStr = (dateStr) => {
 };
 
 // ============================================================
-// ✅ إصلاح: جلب كل الصفوف بدون التقيد بحد PostgREST الافتراضي للصفوف
-// (كان الاستعلام يُرجع فقط أول دفعة من الصفوف الافتراضية، ما يجعل
-//  عدد الطلاب النشطين يظهر أقل من العدد الحقيقي، مثال: 50 بدلاً من 164)
-// نستخدم .range() في حلقة حتى تُرجع الصفحة عدد صفوف أقل من الحجم المطلوب
+// ⛔ تم حذف fetchAllRows() ومنطق العدّ اليدوي في JS: كانا يُنزّلان *كل* صفوف
+// user_course_access/user_subject_access الخاصة بكورسات هذا المدرس (بحلقة
+// .range() كل 1000 صف) في كل تحميل لصفحة لوحة التحكم الرئيسية، فقط لحساب
+// عدد الطلاب الفريدين/لكل كورس/لكل مادة. الآن هذا الحساب بالكامل داخل
+// Postgres عبر get_teacher_student_counts (انظر sql/teacher_student_counts.sql).
 // ============================================================
-const PAGE_SIZE = 1000;
-const fetchAllRows = async (queryBuilderFactory) => {
-  let allRows = [];
-  let from = 0;
-
-  while (true) {
-    const { data, error } = await queryBuilderFactory().range(from, from + PAGE_SIZE - 1);
-    if (error) throw error;
-
-    const rows = data || [];
-    allRows = allRows.concat(rows);
-
-    if (rows.length < PAGE_SIZE) break; // آخر صفحة
-    from += PAGE_SIZE;
-  }
-
-  return allRows;
-};
 
 export default async (req, res) => {
   // 1. التحقق من الصلاحية
@@ -172,39 +154,18 @@ export default async (req, res) => {
     }
 
     // =========================================================
-    // 4. جلب بيانات الطلاب (مع استثناء المدرسين والمشرفين)
+    // 4. حساب إحصائيات الطلاب (إجمالي + لكل كورس + لكل مادة)
     // =========================================================
-    
-    const [courseAccess, subjectAccess] = await Promise.all([
-        // أ. مشتركو الكورسات (فقط من لديهم دور student)
-        // ✅ التعديل: جلب كل الصفوف عبر fetchAllRows بدل استعلام واحد قد يُقتطع
-        courseIds.length > 0
-            ? fetchAllRows(() =>
-                supabase
-                  .from('user_course_access')
-                  .select('course_id, user_id, expires_at, users!inner(role)')
-                  .in('course_id', courseIds)
-                  .eq('users.role', 'student')
-                  .order('user_id', { ascending: true })
-              )
-            : Promise.resolve([]),
+    // ⚡ استعلام واحد داخل Postgres بدل تنزيل كل صفوف الوصول إلى الذاكرة
+    const { data: countsData, error: countsError } = await supabase.rpc('get_teacher_student_counts', {
+      p_course_ids: courseIds,
+      p_subject_ids: subjectIds
+    });
+    if (countsError) throw countsError;
 
-        // ب. مشتركو المواد (فقط من لديهم دور student)
-        subjectIds.length > 0
-            ? fetchAllRows(() =>
-                supabase
-                  .from('user_subject_access')
-                  .select('subject_id, user_id, expires_at, users!inner(role)')
-                  .in('subject_id', subjectIds)
-                  .eq('users.role', 'student')
-                  .order('user_id', { ascending: true })
-              )
-            : Promise.resolve([])
-    ]);
+    const courseCountById = new Map((countsData?.courses  || []).map(c => [c.id, c.count]));
+    const subjectCountById = new Map((countsData?.subjects || []).map(s => [s.id, s.count]));
 
-    // ✅ نستثني الصلاحيات المنتهية حتى لا تُحتسب ضمن الطلاب/الإحصائيات النشطة
-    const activeCourseAccess = courseAccess.filter(isAccessRowActive);
-    const activeSubjectAccess = subjectAccess.filter(isAccessRowActive);
 
     // =========================================================
     // 5. الحسابات النهائية وتجهيز الرد
@@ -214,21 +175,18 @@ export default async (req, res) => {
     const coursesStats = courses.map(course => ({
        id: course.id,
        title: course.title,
-       count: activeCourseAccess.filter(a => a.course_id === course.id).length
+       count: courseCountById.get(course.id) || 0
     }));
 
     // تفاصيل للمواد
     const subjectsStats = subjects.map(subject => ({
        id: subject.id,
        title: subject.title,
-       count: activeSubjectAccess.filter(a => a.subject_id === subject.id).length
+       count: subjectCountById.get(subject.id) || 0
     }));
 
     // إجمالي الطلاب الفريدين
-    const allStudentIds = new Set([
-      ...activeCourseAccess.map(a => a.user_id),
-      ...activeSubjectAccess.map(a => a.user_id)
-    ]);
+    const totalUniqueStudents = countsData?.total_unique_students || 0;
 
     // =========================================================
     // ✅ بناء مصفوفة رسم النشاط اليومي (آخر 7 أيام) لطلاب هذا المدرس
@@ -252,7 +210,7 @@ export default async (req, res) => {
     return res.status(200).json({
       success: true,
       summary: {
-        students: allStudentIds.size, 
+        students: totalUniqueStudents, 
         earnings: totalEarnings, // تم استخراجها بنجاح
         courses: courses.length,
         pending: pendingRequests,

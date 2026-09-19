@@ -94,7 +94,7 @@ export default function SuperDashboard() {
     { label: 'الطلاب المسجلين',  value: stats.totalUsers || 0,                          icon: Icons.users,    key: 'users' },
     { label: 'النشطون اليوم',    value: stats.activeUsersToday || 0,                    icon: Icons.pulse,    key: 'pulse' },
     { label: 'مشاهدات اليوم',    value: watchLoading ? '…' : (watchData?.today || 0),   icon: Icons.eye,      key: 'eye' },
-    { label: 'إجمالي الدخل',    value: `${(stats.totalRevenue || 0).toLocaleString()} ج.م`, icon: Icons.money, key: 'money' },
+    { label: 'أرباح المنصة',    value: `${(stats.totalRevenue || 0).toLocaleString()} ج.م`, icon: Icons.money, key: 'money' },
     { label: 'الكورسات النشطة',  value: stats.activeCourses || 0,                        icon: Icons.course,   key: 'course' },
     { label: 'عدد المدرسين',     value: stats.totalTeachers || 0,                        icon: Icons.teachers, key: 'teachers' },
   ];
@@ -141,7 +141,7 @@ export default function SuperDashboard() {
             <div className="charts-row">
               <div className="chart-card">
                 <div className="chart-card-header">
-                  <h3>📊 نمو الإيرادات</h3>
+                  <h3>📊 نمو أرباح المنصة</h3>
                   <span className="chart-sub">آخر 7 أيام</span>
                 </div>
                 <div className="chart-wrap">
