@@ -1,5 +1,5 @@
 import TeacherLayout from '../../../components/TeacherLayout';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { ComposedChart, Area, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -11,7 +11,8 @@ const Icons = {
   courses: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>,
   earnings: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>,
   eye: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>,
-  pulse: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"></path><line x1="16" y1="8" x2="2" y2="22"></line><line x1="17.5" y1="15" x2="9" y2="15"></line></svg>
+  pulse: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"></path><line x1="16" y1="8" x2="2" y2="22"></line><line x1="17.5" y1="15" x2="9" y2="15"></line></svg>,
+  calendar: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
 };
 
 export default function TeacherDashboard() {
@@ -24,6 +25,11 @@ export default function TeacherDashboard() {
   // ── بيانات المشاهدات (Supabase فقط — بدون Firebase) ──
   const [watchData, setWatchData] = useState(null);
   const [watchLoading, setWatchLoading] = useState(true);
+
+  // ── 📅 تاريخ بداية احتساب "إجمالي الأرباح" (يختاره المدرس ويبقى محفوظاً) ──
+  const [earningsStartDate, setEarningsStartDate] = useState(''); // '' = كل الوقت
+  const [savingEarningsDate, setSavingEarningsDate] = useState(false);
+  const earningsDateInputRef = useRef(null);
 
   // ── تتبع الوضع الليلي/النهاري لتلوين الرسم البياني ──
   const [isDark, setIsDark] = useState(true);
@@ -44,6 +50,8 @@ export default function TeacherDashboard() {
       .then(json => {
         if (json.success) {
           setData(json);
+          // ✅ تهيئة قيمة تاريخ بداية الأرباح من القيمة المحفوظة في قاعدة البيانات
+          setEarningsStartDate(json.summary?.earningsStartDate || '');
         } else {
           console.error("Failed to load stats:", json.error);
         }
@@ -115,6 +123,49 @@ export default function TeacherDashboard() {
 
   const chartLoading = watchLoading || loading;
 
+  // ============================================================
+  // 📅 حفظ/تغيير تاريخ بداية احتساب الأرباح
+  // ============================================================
+  const openEarningsDatePicker = () => {
+    const el = earningsDateInputRef.current;
+    if (!el) return;
+    // showPicker() متاحة في المتصفحات الحديثة وتفتح منتقي التاريخ مباشرة؛
+    // نستخدم focus()+click() كحل احتياطي للمتصفحات الأقدم
+    if (typeof el.showPicker === 'function') {
+      el.showPicker();
+    } else {
+      el.focus();
+      el.click();
+    }
+  };
+
+  const handleEarningsDateChange = async (e) => {
+    const newDate = e.target.value; // 'YYYY-MM-DD' أو '' لو تم المسح
+    const previousDate = earningsStartDate;
+    setEarningsStartDate(newDate); // تحديث فوري للواجهة
+    setSavingEarningsDate(true);
+    try {
+      const res = await fetch('/api/dashboard/teacher/earnings-start-date', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: newDate || null })
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || 'فشل الحفظ');
+
+      // ✅ إعادة جلب الإحصائيات فوراً حتى تنعكس قيمة الأرباح الجديدة على البطاقة
+      const statsRes = await fetch('/api/dashboard/teacher/stats');
+      const statsJson = await statsRes.json();
+      if (statsJson.success) setData(statsJson);
+    } catch (err) {
+      console.error('فشل حفظ تاريخ بداية الأرباح:', err.message);
+      setEarningsStartDate(previousDate); // تراجع عند الفشل
+      alert('تعذر حفظ التاريخ، حاول مرة أخرى');
+    } finally {
+      setSavingEarningsDate(false);
+    }
+  };
+
   // ألوان الرسم البياني حسب الوضع الليلي/النهاري
   const goldColor  = isDark ? '#c9a84c' : '#b8903a';
   const usersColor = isDark ? '#38bdf8' : '#0ea5e9';
@@ -183,12 +234,40 @@ export default function TeacherDashboard() {
               </div>
 
               {/* بطاقة الأرباح */}
-              <div className="stat-card">
+              <div className="stat-card earnings-card">
                 <div className="stat-icon highlight-icon">{Icons.earnings}</div>
                 <div className="stat-info">
-                  <div className="stat-label">إجمالي الأرباح</div>
+                  <div className="stat-label-row">
+                    <div className="stat-label">إجمالي الأرباح</div>
+                    <button
+                      type="button"
+                      className="calendar-btn"
+                      onClick={openEarningsDatePicker}
+                      disabled={savingEarningsDate}
+                      title={earningsStartDate ? `تُحتسب من ${earningsStartDate}` : 'اختر تاريخ بداية احتساب الأرباح'}
+                    >
+                      {Icons.calendar}
+                    </button>
+                    {/* input مخفي بصرياً فقط — showPicker()/click() يفتحان منتقي التاريخ الأصلي للمتصفح */}
+                    <input
+                      ref={earningsDateInputRef}
+                      type="date"
+                      className="hidden-date-input"
+                      value={earningsStartDate || ''}
+                      max={new Date().toISOString().slice(0, 10)}
+                      onChange={handleEarningsDateChange}
+                      tabIndex={-1}
+                      aria-hidden="true"
+                    />
+                  </div>
                   <div className="stat-value">{`${stats.earnings.toLocaleString()} ج.م`}</div>
-                  <div className="stat-desc">أرباحك المباشرة</div>
+                  <div className="stat-desc">
+                    {savingEarningsDate
+                      ? 'جاري الحفظ...'
+                      : earningsStartDate
+                        ? `منذ ${earningsStartDate}`
+                        : 'أرباحك المباشرة (كل الوقت)'}
+                  </div>
                 </div>
                 <div className="stat-glow" />
               </div>
@@ -378,6 +457,31 @@ export default function TeacherDashboard() {
         .stat-label { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 4px; font-weight: 700; }
         .stat-value { font-size: 1.6rem; font-weight: 800; color: var(--text-primary); margin-bottom: 2px; }
         .stat-desc { font-size: 0.75rem; color: var(--text-secondary); }
+
+        /* ── بطاقة الأرباح: زر التقويم لاختيار تاريخ البداية ── */
+        .earnings-card { overflow: visible; }
+        .stat-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+        .stat-label-row .stat-label { margin-bottom: 0; }
+        .calendar-btn {
+          display: flex; align-items: center; justify-content: center;
+          width: 24px; height: 24px;
+          padding: 0;
+          background: var(--gold-dim);
+          border: 1px solid var(--border-accent);
+          border-radius: 7px;
+          color: var(--gold);
+          cursor: pointer;
+          flex-shrink: 0;
+          transition: background 0.15s, transform 0.15s;
+        }
+        .calendar-btn:hover:not(:disabled) { background: var(--gold-dimmer); transform: scale(1.08); }
+        .calendar-btn:disabled { opacity: 0.6; cursor: default; }
+        /* input[type=date] الفعلي مخفي بصرياً — نعتمد على showPicker()/click() من زر التقويم */
+        .hidden-date-input {
+          position: absolute; width: 1px; height: 1px;
+          padding: 0; margin: -1px; overflow: hidden;
+          clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+        }
         
         .stat-glow {
           position: absolute; top: -30px; left: -30px;

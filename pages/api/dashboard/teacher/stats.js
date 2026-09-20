@@ -24,6 +24,14 @@ const cairoDateFormatter = new Intl.DateTimeFormat('en-CA', {
 });
 const getCairoDateStr = (date) => cairoDateFormatter.format(date);
 
+// تحويل تاريخ مصر (YYYY-MM-DD) إلى لحظة UTC الموافقة لبداية ذلك اليوم بتوقيت
+// القاهرة — نفس الدالة المستخدمة في dashboard/super/stats.js، لازمة لتحويل
+// تاريخ بداية احتساب الأرباح الذي يختاره المدرس إلى حد زمني صحيح لـ RPC.
+const getUtcBoundary = (dateStr) => {
+  const offset = getEgyptOffset(`${dateStr}T00:00:00`);
+  return new Date(`${dateStr}T00:00:00${offset}`).toISOString();
+};
+
 const shiftDateStr = (dateStr, days) => {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
@@ -70,7 +78,7 @@ export default async (req, res) => {
     // نجلب الكورسات، الطلبات المعلقة، والأرباح في وقت واحد
     // =========================================================
     
-    const [coursesResult, pendingResult, revenueResult, dailyStatsResult] = await Promise.all([
+    const [coursesResult, pendingResult, teacherConfigResult, dailyStatsResult] = await Promise.all([
       // أ. جلب الكورسات
       supabase
         .from('courses')
@@ -84,13 +92,12 @@ export default async (req, res) => {
         .eq('teacher_id', teacherId)
         .eq('status', 'pending'),
 
-      // ج. حساب الأرباح (عبر دالة قاعدة البيانات الجديدة الخاصة بالتحصيل الفعلي)
-      // ✅ التعديل هنا: استخدام الدالة get_teacher_actual_revenue
-      supabase.rpc('get_teacher_actual_revenue', { 
-          teacher_id_arg: teacherId,
-          start_date: null,
-          end_date: null
-      }),
+      // ج. ✅ تاريخ بداية احتساب الأرباح الذي اختاره المدرس (إن وُجد)
+      supabase
+        .from('teachers')
+        .select('earnings_start_date')
+        .eq('id', teacherId)
+        .maybeSingle(),
 
       // د. ✅ إحصائيات النشاط اليومي لطلاب هذا المدرس (آخر 7 أيام)
       supabase
@@ -100,6 +107,18 @@ export default async (req, res) => {
         .gte('record_date', localLimitDateStr)
         .order('record_date', { ascending: false })
     ]);
+
+    // ✅ تاريخ بداية الأرباح: null يعني "كل الوقت" (نفس السلوك القديم)
+    const earningsStartDate = teacherConfigResult.data?.earnings_start_date || null;
+    const earningsStartBoundary = earningsStartDate ? getUtcBoundary(earningsStartDate) : null;
+
+    // ج. حساب الأرباح (عبر دالة قاعدة البيانات الخاصة بالتحصيل الفعلي)
+    // ✅ نمرر تاريخ البداية الذي اختاره المدرس (أو null لكل الوقت كما كان)
+    const revenueResult = await supabase.rpc('get_teacher_actual_revenue', {
+        teacher_id_arg: teacherId,
+        start_date: earningsStartBoundary,
+        end_date: null
+    });
 
     // التحقق من الأخطاء في البيانات الأساسية
     if (coursesResult.error) throw coursesResult.error;
@@ -114,12 +133,15 @@ export default async (req, res) => {
         console.warn("⚠️ RPC Failed or returned null, falling back to manual calculation.", revenueResult.error?.message);
         
         // الحساب اليدوي كاحتياطي
-        // ✅ التعديل هنا: جلب actual_paid_price مع total_price لحساب السعر الفعلي
-        const { data: manualData, error: manualError } = await supabase
+        // ✅ نطبّق نفس تاريخ البداية الذي اختاره المدرس (إن وُجد) هنا أيضاً
+        let manualQuery = supabase
             .from('subscription_requests')
             .select('total_price, actual_paid_price')
             .eq('teacher_id', teacherId)
             .eq('status', 'approved');
+        if (earningsStartBoundary) manualQuery = manualQuery.gte('created_at', earningsStartBoundary);
+
+        const { data: manualData, error: manualError } = await manualQuery;
             
         if (!manualError && manualData) {
              // ✅ التعديل هنا: محاكاة COALESCE (استخدام actual_paid_price وإلا استخدام total_price)
@@ -212,6 +234,7 @@ export default async (req, res) => {
       summary: {
         students: totalUniqueStudents, 
         earnings: totalEarnings, // تم استخراجها بنجاح
+        earningsStartDate, // ✅ التاريخ المحفوظ الذي تُحتسب منه الأرباح (أو null لكل الوقت)
         courses: courses.length,
         pending: pendingRequests,
         activeUsersToday // ✅ عدد الطلاب النشطين اليوم

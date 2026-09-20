@@ -1,6 +1,31 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { verifyTeacher } from '../../../lib/teacherAuth';
 
+// ============================================================
+// ✅ نفس أدوات توقيت القاهرة المستخدمة في dashboard/teacher/stats.js —
+// لازمة لتحويل تاريخ بداية احتساب الأرباح (الذي يختاره المدرس من لوحة
+// التحكم) إلى حد زمني UTC صحيح يُمرَّر لدالة get_teacher_actual_revenue.
+// ============================================================
+const getEgyptOffset = (dateInput) => {
+  try {
+    const date = new Date(dateInput);
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Cairo', timeZoneName: 'shortOffset' });
+    const parts = fmt.formatToParts(date);
+    const offsetString = parts.find(p => p.type === 'timeZoneName').value;
+    const hours = parseInt(offsetString.replace(/[^\d+-]/g, '')) || 2;
+    const sign = hours >= 0 ? '+' : '-';
+    const paddedHours = Math.abs(hours).toString().padStart(2, '0');
+    return `${sign}${paddedHours}:00`;
+  } catch (e) {
+    return '+02:00';
+  }
+};
+
+const getUtcBoundary = (dateStr) => {
+  const offset = getEgyptOffset(`${dateStr}T00:00:00`);
+  return new Date(`${dateStr}T00:00:00${offset}`).toISOString();
+};
+
 export default async (req, res) => {
   // 1. التحقق من أن المستخدم مدرس
   const auth = await verifyTeacher(req);
@@ -75,12 +100,25 @@ export default async (req, res) => {
     // =========================================================
     // 5. حساب الأرباح (باستخدام الدالة حصراً)
     // =========================================================
-    
+
+    // ✅ نفس تاريخ بداية الأرباح الذي يختاره المدرس من لوحة التحكم
+    // (بطاقة "إجمالي الأرباح" -> أيقونة التقويم)، بدل تجاهله هنا والاحتساب
+    // من كل الوقت دائماً في هذه الشاشة الخاصة بالتطبيق
+    const { data: teacherConfig, error: teacherConfigError } = await supabase
+      .from('teachers')
+      .select('earnings_start_date')
+      .eq('id', teacherId)
+      .maybeSingle();
+    if (teacherConfigError) throw teacherConfigError;
+
+    const earningsStartDate = teacherConfig?.earnings_start_date || null;
+    const earningsStartBoundary = earningsStartDate ? getUtcBoundary(earningsStartDate) : null;
+
     // ✅ التعديل الجوهري هنا: استدعاء دالة التحصيل الفعلي المحدثة
     const { data: rpcData, error: rpcError } = await supabase
       .rpc('get_teacher_actual_revenue', { 
           teacher_id_arg: teacherId,
-          start_date: null,
+          start_date: earningsStartBoundary,
           end_date: null
       });
 
@@ -98,6 +136,7 @@ export default async (req, res) => {
     return res.status(200).json({
       totalUniqueStudents,
       totalEarnings,
+      earningsStartDate, // ✅ حتى تعرض شاشة التطبيق نفس التاريخ المحفوظ من لوحة التحكم
       coursesStats,
       subjectsStats
     });
@@ -106,4 +145,4 @@ export default async (req, res) => {
     console.error("Financial Stats Error:", err.message);
     return res.status(500).json({ error: err.message });
   }
-}; 
+};
