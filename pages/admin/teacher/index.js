@@ -126,18 +126,6 @@ export default function TeacherDashboard() {
   // ============================================================
   // 📅 حفظ/تغيير تاريخ بداية احتساب الأرباح
   // ============================================================
-  const openEarningsDatePicker = () => {
-    const el = earningsDateInputRef.current;
-    if (!el) return;
-    // showPicker() متاحة في المتصفحات الحديثة وتفتح منتقي التاريخ مباشرة؛
-    // نستخدم focus()+click() كحل احتياطي للمتصفحات الأقدم
-    if (typeof el.showPicker === 'function') {
-      el.showPicker();
-    } else {
-      el.focus();
-      el.click();
-    }
-  };
 
   const handleEarningsDateChange = async (e) => {
     const newDate = e.target.value; // 'YYYY-MM-DD' أو '' لو تم المسح
@@ -239,26 +227,24 @@ export default function TeacherDashboard() {
                 <div className="stat-info">
                   <div className="stat-label-row">
                     <div className="stat-label">إجمالي الأرباح</div>
-                    <button
-                      type="button"
-                      className="calendar-btn"
-                      onClick={openEarningsDatePicker}
-                      disabled={savingEarningsDate}
-                      title={earningsStartDate ? `تُحتسب من ${earningsStartDate}` : 'اختر تاريخ بداية احتساب الأرباح'}
-                    >
-                      {Icons.calendar}
-                    </button>
-                    {/* input مخفي بصرياً فقط — showPicker()/click() يفتحان منتقي التاريخ الأصلي للمتصفح */}
-                    <input
-                      ref={earningsDateInputRef}
-                      type="date"
-                      className="hidden-date-input"
-                      value={earningsStartDate || ''}
-                      max={new Date().toISOString().slice(0, 10)}
-                      onChange={handleEarningsDateChange}
-                      tabIndex={-1}
-                      aria-hidden="true"
-                    />
+                    {/* ✅ نمط متوافق مع كل المتصفحات (بما فيها Safari على iPhone):
+                        input[type=date] حقيقي بحجم كامل فوق الأيقونة مباشرة
+                        وشفاف (opacity:0) — فاللمسة نفسها تفتح منتقي التاريخ
+                        الأصلي بدل الاعتماد على showPicker()/click() المُصطنعة
+                        التي لا تعمل على iOS إذا كان العنصر مخفياً/بلا أبعاد. */}
+                    <div className="calendar-btn-wrap" title={earningsStartDate ? `تُحتسب من ${earningsStartDate}` : 'اختر تاريخ بداية احتساب الأرباح'}>
+                      <div className="calendar-btn" aria-hidden="true">{Icons.calendar}</div>
+                      <input
+                        ref={earningsDateInputRef}
+                        type="date"
+                        className="calendar-overlay-input"
+                        value={earningsStartDate || ''}
+                        max={new Date().toISOString().slice(0, 10)}
+                        onChange={handleEarningsDateChange}
+                        disabled={savingEarningsDate}
+                        aria-label="اختر تاريخ بداية احتساب الأرباح"
+                      />
+                    </div>
                   </div>
                   <div className="stat-value">{`${stats.earnings.toLocaleString()} ج.م`}</div>
                   <div className="stat-desc">
@@ -462,26 +448,33 @@ export default function TeacherDashboard() {
         .earnings-card { overflow: visible; }
         .stat-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
         .stat-label-row .stat-label { margin-bottom: 0; }
+        /* الأيقونة المرئية فقط — لا تستقبل أي أحداث لمس/نقر بنفسها */
+        .calendar-btn-wrap { position: relative; width: 26px; height: 26px; flex-shrink: 0; }
         .calendar-btn {
+          position: absolute; inset: 0;
           display: flex; align-items: center; justify-content: center;
-          width: 24px; height: 24px;
-          padding: 0;
           background: var(--gold-dim);
           border: 1px solid var(--border-accent);
           border-radius: 7px;
           color: var(--gold);
+          pointer-events: none; /* كل اللمس/النقر يذهب لحقل التاريخ الشفاف فوقها */
+        }
+        /* ✅ input[type=date] حقيقي بنفس حجم الأيقونة تماماً وموضوع فوقها
+           مباشرة، شفاف بالكامل — هذا هو النمط المتوافق مع كل الأجهزة:
+           اللمسة/النقرة تقع فعلياً على عنصر الفورم نفسه فيفتح المتصفح
+           منتقي التاريخ الأصلي تلقائياً (يشمل Safari على iPhone/iPad،
+           وكل متصفحات Android وسطح المكتب) بدل الاعتماد على استدعاء
+           showPicker()/click() برمجياً على عنصر مخفي بلا أبعاد، وهو ما
+           لا يعمل بشكل موثوق على iOS. */
+        .calendar-overlay-input {
+          position: absolute; inset: 0;
+          width: 100%; height: 100%;
+          margin: 0; padding: 0; border: 0;
+          opacity: 0;
           cursor: pointer;
-          flex-shrink: 0;
-          transition: background 0.15s, transform 0.15s;
+          -webkit-appearance: none; appearance: none;
         }
-        .calendar-btn:hover:not(:disabled) { background: var(--gold-dimmer); transform: scale(1.08); }
-        .calendar-btn:disabled { opacity: 0.6; cursor: default; }
-        /* input[type=date] الفعلي مخفي بصرياً — نعتمد على showPicker()/click() من زر التقويم */
-        .hidden-date-input {
-          position: absolute; width: 1px; height: 1px;
-          padding: 0; margin: -1px; overflow: hidden;
-          clip: rect(0,0,0,0); white-space: nowrap; border: 0;
-        }
+        .calendar-overlay-input:disabled { cursor: default; }
         
         .stat-glow {
           position: absolute; top: -30px; left: -30px;
