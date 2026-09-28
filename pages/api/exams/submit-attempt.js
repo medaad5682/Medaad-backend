@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper'; // 1. استيراد الحارس
+import { notifyTeacherExamSubmission } from '../../../lib/notifyHelper'; // 🔔 إشعار المعلم عند تسليم الامتحان
 
 export default async (req, res) => {
   const apiName = '[API: submit-attempt]';
@@ -128,7 +129,7 @@ export default async (req, res) => {
     // 4. جلب بيانات المحاولة للتحقق من الملكية
     const { data: attemptData, error: fetchError } = await supabase
         .from('user_attempts')
-        .select('exam_id, user_id, status')
+        .select('exam_id, user_id, status, student_name_input')
         .eq('id', attemptId)
         .single();
 
@@ -224,6 +225,18 @@ export default async (req, res) => {
 
         console.log(`${apiName} ✅ Exam submitted, pending manual grading. Auto score: ${score}/${total}`);
 
+        // 🔔 إشعار المعلم: ورقة جديدة بانتظار التصحيح (المادة / الكورس / اسم الامتحان)
+        await notifyTeacherExamSubmission({
+          attemptId,
+          examId: realExamId,
+          studentUserId: userId,
+          studentNameInput: attemptData.student_name_input,
+          needsGrading: true,
+          score,
+          total,
+          percentage
+        });
+
         return res.status(200).json({
           success: true,
           pending_grading: true,
@@ -247,6 +260,18 @@ export default async (req, res) => {
     if (updateError) throw updateError;
 
     console.log(`${apiName} ✅ Real Exam submitted. Score: ${score}/${total}`);
+
+    // 🔔 إشعار المعلم: طالب جديد حلّ الامتحان (اختياري فقط) مع درجته
+    await notifyTeacherExamSubmission({
+      attemptId,
+      examId: realExamId,
+      studentUserId: userId,
+      studentNameInput: attemptData.student_name_input,
+      needsGrading: false,
+      score,
+      total,
+      percentage
+    });
 
     return res.status(200).json({
       success: true,
