@@ -1,32 +1,7 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
+import { getUtcBoundary } from '../../../../lib/egyptTime';
 import { computeTeacherBilling } from '../../../../lib/teacherBillingHelper';
-
-// ✅ دالة ذكية لحساب فرق التوقيت لمصر بناءً على التاريخ (تدعم الصيفي والشتوي)
-const getEgyptOffset = (dateString) => {
-    try {
-        const date = new Date(dateString);
-        const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Cairo', timeZoneName: 'shortOffset' });
-        const parts = fmt.formatToParts(date);
-        const offsetString = parts.find(p => p.type === 'timeZoneName').value; 
-        
-        const hours = parseInt(offsetString.replace(/[^\d+-]/g, '')) || 2;
-        const sign = hours >= 0 ? '+' : '-';
-        const paddedHours = Math.abs(hours).toString().padStart(2, '0');
-        return `${sign}${paddedHours}:00`; 
-    } catch (e) {
-        return '+02:00'; 
-    }
-};
-
-// ✅ الدالة الجديدة: تحويل تاريخ مصر إلى UTC (جرينتش) صريح قبل إرساله للداتابيز
-const getUtcBoundary = (dateString, isEnd = false) => {
-    if (!dateString) return null;
-    const offset = getEgyptOffset(dateString);
-    const time = isEnd ? '23:59:59' : '00:00:00';
-    // بناء التاريخ بتوقيت مصر ثم تحويله لـ ISO (الذي يعطينا توقيت جرينتش بحرف Z)
-    return new Date(`${dateString}T${time}${offset}`).toISOString();
-};
 
 export default async function handler(req, res) {
   // 🆔 إعداد لوجات التتبع (Logs)
