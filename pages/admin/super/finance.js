@@ -51,6 +51,17 @@ const methodBadgeText = (teacher) => {
   return `نسبة ${round0(teacher.custom_percentage)}%`;
 };
 
+// ✅ تاريخ "اليوم" بتوقيت القاهرة بصيغة YYYY-MM-DD (مع إزاحة اختيارية بالأيام).
+// السبب: new Date().toISOString() بيرجّع تاريخ UTC، وده بيتأخر عن القاهرة
+// بـ 2-3 ساعات، فبعد منتصف الليل في مصر يفضل التاريخ القديم لحد 2/3 الفجر.
+const cairoDateString = (offsetDays = 0) => {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date()); // YYYY-MM-DD
+  const [y, m, d] = today.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + offsetDays)).toISOString().split('T')[0];
+};
+
 export default function SuperFinance() {
   const [loading, setLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(null);
@@ -63,10 +74,11 @@ export default function SuperFinance() {
     teachers_list: []
   });
 
-  const [dateRange, setDateRange] = useState({
-    startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
-    endDate: new Date().toISOString().split('T')[0]
-  });
+  // ✅ التاريخ الافتراضي بتوقيت القاهرة (وليس UTC)
+  const [dateRange, setDateRange] = useState(() => ({
+    startDate: cairoDateString(-30),
+    endDate: cairoDateString(0)
+  }));
 
   const fetchFinanceData = async () => {
     setLoading(true);
