@@ -6,6 +6,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto'; // ✅ [FIX F-13] استدعاء مكتبة التشفير المدمجة في Node.js لحساب البصمة
+import { postProcessUploadedPdf } from '../../../../lib/ilovepdf'; // 🧾 iLoveAPI: ضغط الـ PDF
 
 // إعدادات الكونفج الخاصة بـ Next.js
 export const config = {
@@ -156,6 +157,12 @@ export default async (req, res) => {
         }
 
         const pdfTitle = req.body.title || req.file.originalname;
+
+        // 🧾 [iLoveAPI] ضغط الـ PDF قبل حساب البصمة
+        // (آمن: لو فشل iLovePDF يفضل الملف الأصلي كما هو)
+        if (path.extname(req.file.originalname).toLowerCase() === '.pdf') {
+            await postProcessUploadedPdf(req.file.path);
+        }
 
         // ✅ [FIX F-13] حساب بصمة SHA-256 للملف بعد رفعه بنجاح
         let contentHash = null;

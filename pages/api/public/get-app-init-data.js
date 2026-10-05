@@ -277,14 +277,89 @@ export default async (req, res) => {
           });
 
           libraryData = Array.from(libraryMap.values());
+
+          // ==========================================
+          // 📦 تجميع الكورسات/المواد المملوكة التابعة لنفس الباقة في مجلد واحد
+          // ==========================================
+          // ينطبق على كل عنصر مكتبة يمثّل "كورساً أباً" تابعاً لباقة، سواء
+          // كان الطالب يملك الكورس بالكامل (type:'course') أو يملك مواد
+          // منفصلة منه فقط (type:'subject_group') — فكلاهما لهما نفس معنى
+          // "هذا الكورس الأب تابع لباقة"، لذا يجب أن يظهر أيهما داخل مجلد
+          // الباقة بدل منفرداً في المكتبة.
+          const ownedCourseEntries = libraryData.filter(
+            item => item.type === 'course' || item.type === 'subject_group'
+          );
+
+          if (ownedCourseEntries.length > 0) {
+            const ownedCourseIds = ownedCourseEntries.map(c => c.id);
+
+            const { data: pkgItems } = await supabase
+              .from('course_package_items')
+              .select('package_id, course_id, course_packages ( id, title, is_active )')
+              .in('course_id', ownedCourseIds);
+
+            // ✅ الكورس الواحد قد يتبع أكثر من باقة: نخزّن قائمة بكل باقاته
+            // (وليس أول باقة فقط) حتى يظهر الكورس داخل مجلد كل باقة منها.
+            const courseIdToPackages = new Map(); // courseId -> [{ id, title }]
+            (pkgItems || []).forEach(pi => {
+              const pkg = pi.course_packages;
+              // نتجاهل الباقات المؤرشفة (is_active = false)؛ الكورس عندها
+              // يبقى يظهر منفرداً كما كان قبل هذه الميزة.
+              if (!pkg || pkg.is_active === false) return;
+              if (!courseIdToPackages.has(pi.course_id)) {
+                courseIdToPackages.set(pi.course_id, []);
+              }
+              const list = courseIdToPackages.get(pi.course_id);
+              if (!list.some(p => p.id === pkg.id)) {
+                list.push({ id: pkg.id, title: pkg.title });
+              }
+            });
+
+            if (courseIdToPackages.size > 0) {
+              const packageGroups = new Map(); // packageId -> { type:'package', id, title, courses: [] }
+              const restOfLibrary = [];
+
+              libraryData.forEach(item => {
+                const isGroupable = item.type === 'course' || item.type === 'subject_group';
+                if (isGroupable && courseIdToPackages.has(item.id)) {
+                  // ✅ نضيف الكورس إلى كل باقة يتبعها (مجلد لكل باقة)
+                  courseIdToPackages.get(item.id).forEach(pkg => {
+                    if (!packageGroups.has(pkg.id)) {
+                      packageGroups.set(pkg.id, {
+                        type: 'package',
+                        id: pkg.id,
+                        title: pkg.title,
+                        courses: [],
+                      });
+                    }
+                    packageGroups.get(pkg.id).courses.push(item);
+                  });
+                } else {
+                  restOfLibrary.push(item);
+                }
+              });
+
+              // مجلدات الباقات أولاً ثم بقية عناصر المكتبة (كورسات منفردة لا
+              // تتبع أي باقة + مجموعات المواد المنفصلة التي لا تتبع باقة).
+              libraryData = [...Array.from(packageGroups.values()), ...restOfLibrary];
+            }
+          }
        }
     }
 
     // 3. جلب بيانات المتجر (عام للجميع)
-    const { data: courses } = await supabase
+    // ✅ التعديل: نجلب 5 كورسات عشوائية فقط بدلاً من كل الكورسات — الشاشة
+    // الرئيسية تعرض هذه كـ"مقترح لك"، أما البحث الكامل فيتم عبر
+    // /api/public/search-courses بشكل منفصل عند الطلب.
+    const { data: allCoursesForRandom } = await supabase
       .from('view_course_details')
-      .select('*')
-      .order('sort_order', { ascending: true });
+      .select('*');
+
+    let courses = [];
+    if (allCoursesForRandom && allCoursesForRandom.length > 0) {
+      const shuffled = [...allCoursesForRandom].sort(() => Math.random() - 0.5);
+      courses = shuffled.slice(0, 5);
+    }
 
     // 4. ✅ (تعديل) جلب إعدادات التواصل + إعدادات الوضع المجاني
     const { data: settingsData } = await supabase
@@ -303,7 +378,7 @@ export default async (req, res) => {
       user: userData,          
       myAccess: userAccess, 
       library: libraryData, 
-      courses: courses || [],
+      courses: courses,
       // ✅ إرسال معلومات التواصل
       contactInfo: {
           whatsapp: contactInfo['support_whatsapp'] || '',

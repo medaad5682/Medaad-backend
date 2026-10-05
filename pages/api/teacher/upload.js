@@ -6,6 +6,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto'; // ✅ استدعاء مكتبة التشفير لحساب بصمة الملف
+import { postProcessUploadedPdf } from '../../../lib/ilovepdf'; // 🧾 iLoveAPI: ضغط الـ PDF
 
 // إعدادات الكونفج الخاصة بـ Next.js
 export const config = {
@@ -125,6 +126,15 @@ export default async (req, res) => {
     console.log(`   -> Original Name: ${req.file.originalname}`);
     console.log(`   -> Saved Name:    ${req.file.filename}`);
     console.log(`   -> Size:          ${(req.file.size / 1024 / 1024).toFixed(2)} MB`);
+
+    // ============================================================
+    // 🧾 [iLoveAPI] ضغط الـ PDF قبل حساب البصمة
+    // مهم: لازم يتم قبل SHA-256 عشان content_hash يطابق الملف النهائي
+    // (آمن: لو فشل iLovePDF يفضل الملف الأصلي كما هو)
+    // ============================================================
+    if (uploadedExt === '.pdf') {
+        await postProcessUploadedPdf(req.file.path);
+    }
 
     // ============================================================
     // ✅ [FIX F-13] توليد البصمة (SHA-256) للملف المرفوع
