@@ -310,7 +310,7 @@ export default async (req, res) => {
           telegram: contactInfo['support_telegram'] || ''
       },
       // ✅ إرسال حالة الوضع المجاني
-      freeModeV10: contactInfo['free_mode'] === 'true'
+      freeModeV11: contactInfo['free_mode'] === 'true'
     });
 
   } catch (err) {
