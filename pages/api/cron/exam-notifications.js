@@ -1,5 +1,5 @@
 import { supabase } from '../../../lib/supabaseClient';
-import admin from '../../../lib/firebaseAdmin';
+import { sendToTopicOrThrow } from '../../../lib/pushService';
 
 // ============================================================
 // 🔔 Cron Job: إرسال إشعارات الامتحانات عند موعد بدئها
@@ -9,7 +9,7 @@ import admin from '../../../lib/firebaseAdmin';
 // المنطق:
 //   1. نجلب كل الامتحانات التي notify_students=true
 //      وstart_time وصل (في الماضي أو الآن) ولم يُرسل إشعارها بعد
-//   2. نرسل FCM لكل مادة (topic) ونحفظ في سجل الإشعارات
+//   2. نرسل الإشعار (FCM + HMS) لكل مادة (topic) ونحفظ في سجل الإشعارات
 //   3. نضع notify_students=false ليمنع إعادة الإرسال
 // ============================================================
 
@@ -92,42 +92,18 @@ export default async function handler(req, res) {
         }
 
         // ============================================================
-        // 3. إرسال إشعار FCM للطلاب المشتركين في المادة
+        // 3. إرسال إشعار (FCM + HMS) للطلاب المشتركين في المادة
         // ============================================================
-        const message = {
-          notification: {
-            title: courseTitle,
-            body: `🔔 بدأ الاختبار الآن: ${examTitle}`
-          },
-          topic: `subject_${subjectId}`,
-          android: {
-            priority: 'high',
-            notification: {
-              sound: 'default',
-              priority: 'max',
-              channelId: 'fcm_channel',
-              clickAction: 'FLUTTER_NOTIFICATION_CLICK'
-            }
-          },
-          apns: {
-            headers: { 'apns-priority': '10' },
-            payload: {
-              aps: {
-                sound: 'default',
-                badge: 1,
-                'content-available': 1
-              }
-            }
-          },
+        // يرمي خطأ لو فشل الإرسال على كل الشبكات (نفس سلوك FCM السابق)
+        await sendToTopicOrThrow(`subject_${subjectId}`, {
+          title: courseTitle,
+          body: `🔔 بدأ الاختبار الآن: ${examTitle}`,
+          type: 'exam',
           data: {
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-            type: 'exam',
             id: exam.id.toString(),
             subject_id: subjectId.toString()
           }
-        };
-
-        await admin.messaging().send(message);
+        });
 
         // ============================================================
         // 4. حفظ في سجل الإشعارات ليظهر داخل التطبيق

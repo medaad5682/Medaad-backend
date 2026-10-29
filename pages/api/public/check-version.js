@@ -10,8 +10,10 @@ export default async function handler(req, res) {
   const { platform } = req.query;
 
   // التحقق من صحة المنصة
-  if (!platform || !['android', 'ios'].includes(platform)) {
-    return res.status(400).json({ message: 'Invalid platform. Must be "android" or "ios"' });
+  // 🆕 خطوة 20: 'huawei' = أجهزة هواوي بدون خدمات جوجل (التحديث من AppGallery).
+  //    النسخ القديمة من التطبيق ترسل android/ios فقط فلا تتأثر.
+  if (!platform || !['android', 'ios', 'huawei'].includes(platform)) {
+    return res.status(400).json({ message: 'Invalid platform. Must be "android", "ios" or "huawei"' });
   }
 
   try {

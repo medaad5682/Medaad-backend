@@ -1,7 +1,7 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { checkTeacherPermission } from '../../../../lib/teacherPermissions';
-import admin from '../../../../lib/firebaseAdmin';
+import { sendToTopicOrThrow } from '../../../../lib/pushService';
 
 // ===================================================================
 // 🔔 إرسال إشعار فوري لصف فيديو واحد (مخصص لحالة النسخ بعد اكتمال الفيديو)
@@ -25,13 +25,12 @@ async function sendImmediateVideoNotification(newVideoId, chapterId, videoTitle)
     const title       = courseTitle;
     const body        = `تم رفع فيديو: ${videoTitle || 'فيديو جديد'}`;
 
-    // 2. إرسال FCM لجميع مشتركي المادة
-    await admin.messaging().send({
-      notification: { title, body },
-      topic: `subject_${subjectId}`,
-      android: { priority: 'high', notification: { sound: 'default' } },
-      apns: { payload: { aps: { sound: 'default', badge: 1, 'content-available': 1 } } },
-      data: { click_action: 'FLUTTER_NOTIFICATION_CLICK', type: 'subject', id: subjectId.toString() },
+    // 2. إرسال الإشعار (FCM + HMS) لجميع مشتركي المادة
+    await sendToTopicOrThrow(`subject_${subjectId}`, {
+      title,
+      body,
+      type: 'subject',
+      data: { id: subjectId.toString() },
     });
 
     // 3. تسجيل الإشعار في جدول notifications

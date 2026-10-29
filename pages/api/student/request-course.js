@@ -1,6 +1,6 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper';
-import admin from '../../../lib/firebaseAdmin';
+import { sendToUser, hasPushToken, PUSH_USER_COLUMNS } from '../../../lib/pushService';
 import formidable from 'formidable';
 import fs from 'fs';
 import path from 'path';
@@ -284,44 +284,36 @@ export default async (req, res) => {
         try {
           const { data: teacherUser } = await supabase
             .from('users')
-            .select('id, fcm_token')
+            .select(PUSH_USER_COLUMNS)
             .eq('teacher_profile_id', detectedTeacherId)
             .eq('role', 'teacher')
             .maybeSingle();
 
-          if (teacherUser?.fcm_token) {
+          if (hasPushToken(teacherUser)) {
             const notifTitle = '🔔 طلب اشتراك جديد';
             const notifBody = `${user.first_name} طلب الاشتراك في: ${titleList.join(' | ')}`;
 
-            await admin.messaging().send({
-              token: teacherUser.fcm_token,
-              notification: { title: notifTitle, body: notifBody },
-              android: {
-                priority: 'high',
-                notification: { sound: 'default', priority: 'max', channelId: 'fcm_channel', clickAction: 'FLUTTER_NOTIFICATION_CLICK' }
-              },
-              apns: {
-                headers: { 'apns-priority': '10' },
-                payload: { aps: { sound: 'default', badge: 1, contentAvailable: true } }
-              },
-              data: {
-                click_action: 'FLUTTER_NOTIFICATION_CLICK',
-                type: 'subscription_request',
-                id: newRequest.id.toString()
-              }
-            });
-
-            await supabase.from('notifications').insert({
+            const pushResult = await sendToUser(teacherUser, {
               title: notifTitle,
               body: notifBody,
-              target_type: 'subscription_request',
-              target_id: newRequest.id.toString(),
-              sender_role: 'student'
+              type: 'subscription_request',
+              data: { id: newRequest.id.toString() }
             });
+
+            // نفس السلوك السابق: لا نسجّل الإشعار في السجل إذا فشل الإرسال
+            if (pushResult.sent) {
+              await supabase.from('notifications').insert({
+                title: notifTitle,
+                body: notifBody,
+                target_type: 'subscription_request',
+                target_id: newRequest.id.toString(),
+                sender_role: 'student'
+              });
+            }
           }
         } catch (notifyErr) {
           // لا نفشل الطلب الأساسي بسبب فشل الإشعار فقط
-          console.error('⚠️ FCM Teacher Notify Error:', notifyErr.message);
+          console.error('⚠️ Push Teacher Notify Error:', notifyErr.message);
         }
       }
 

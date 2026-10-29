@@ -1,6 +1,7 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper'; // 1. الحارس الأساسي (الذي يحتوي الآن على فحص App Check)
 import { serialize } from 'cookie';
+import { CLEAR_PUSH_TOKENS } from '../../../lib/pushRegistration';
 
 export default async (req, res) => {
   // 1. السماح فقط بطلبات POST (ممارسة أمنية أفضل لتسجيل الخروج)
@@ -29,6 +30,16 @@ export default async (req, res) => {
               .eq('id', userId);
               
           console.log(`✅ User ${userId} logged out and token revoked.`);
+
+          // 4.1 إيقاف الإشعارات على هذا الجهاز بعد تسجيل الخروج (FCM + HMS).
+          // في طلب منفصل عمداً: إبطال الجلسة أعلاه هو الأهم ولا يجب أن يتأثر بهذا.
+          const { error: pushClearErr } = await supabase
+              .from('users')
+              .update(CLEAR_PUSH_TOKENS)
+              .eq('id', userId);
+          if (pushClearErr) {
+              console.error("⚠️ Logout: failed to clear push tokens:", pushClearErr.message);
+          }
       } catch (err) {
           console.error("❌ Logout DB Error:", err.message);
       }

@@ -194,6 +194,36 @@ export default function SuperSettings() {
     setVersions(updatedVersions);
   };
 
+  // 🆕 خطوة 20: أسماء المنصات (android / ios / huawei)
+  const platformShortName = (platform) =>
+    platform === 'android' ? 'الاندرويد' : platform === 'huawei' ? 'هواوي' : 'الايفون';
+  const platformTitle = (platform) =>
+    platform === 'android' ? '🤖 إعدادات Android' : platform === 'huawei' ? '🔶 إعدادات Huawei (AppGallery)' : '🍎 إعدادات iOS';
+
+  // 🆕 إنشاء صف إصدارات هواوي من اللوحة (بدون SQL)
+  const createPlatformVersion = async (platform) => {
+    setLoadingVersions(true);
+    try {
+      const res = await fetch('/api/dashboard/super/app-versions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showToast(`تم إنشاء إعدادات ${platformShortName(platform)}، عدّل الحقول ثم احفظ`);
+        await fetchVersions();
+      } else {
+        showToast(data.error || 'تعذر إنشاء الإعدادات', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('خطأ في الاتصال', 'error');
+    } finally {
+      setLoadingVersions(false);
+    }
+  };
+
   const saveVersion = async (index) => {
     const versionData = versions[index];
     setLoadingVersions(true);
@@ -205,10 +235,11 @@ export default function SuperSettings() {
       });
 
       if (res.ok) {
-        showToast(`تم تحديث إعدادات ${versionData.platform === 'android' ? 'الاندرويد' : 'الايفون'} بنجاح`);
+        showToast(`تم تحديث إعدادات ${platformShortName(versionData.platform)} بنجاح`);
         fetchVersions();
       } else {
-        showToast('حدث خطأ أثناء التحديث', 'error');
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.error || 'حدث خطأ أثناء التحديث', 'error');
       }
     } catch (err) {
       console.error(err);
@@ -489,7 +520,7 @@ export default function SuperSettings() {
               <div key={ver.id || index} className="card">
                 <div className="card-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                   <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {ver.platform === 'android' ? '🤖 إعدادات Android' : '🍎 إعدادات iOS'}
+                    {platformTitle(ver.platform)}
                   </h3>
                   {ver.force_update && <span className="badge-red">إجباري مفعل</span>}
                 </div>
@@ -516,11 +547,11 @@ export default function SuperSettings() {
                   </div>
 
                   <div className="form-group mt-3">
-                    <label>رابط المتجر (Store URL)</label>
+                    <label>رابط المتجر (Store URL){ver.platform === 'huawei' ? ' - رابط التطبيق في AppGallery' : ''}</label>
                     <input 
                       type="text" 
                       className="input-field ltr"
-                      value={ver.store_url}
+                      value={ver.store_url || ''}
                       onChange={(e) => handleVersionChange(index, 'store_url', e.target.value)}
                     />
                   </div>
@@ -551,12 +582,35 @@ export default function SuperSettings() {
                       disabled={loadingVersions}
                       onClick={() => saveVersion(index)}
                     >
-                      {loadingVersions ? 'جاري التحديث...' : `تحديث ${ver.platform === 'android' ? 'الاندرويد' : 'الايفون'}`}
+                      {loadingVersions ? 'جاري التحديث...' : `تحديث ${platformShortName(ver.platform)}`}
                     </button>
                   </div>
                 </div>
               </div>
             ))}
+
+            {/* 🆕 صف هواوي غير موجود بعد: إنشاؤه بضغطة واحدة بدل تشغيل SQL */}
+            {versions.length > 0 && !versions.some((v) => v.platform === 'huawei') && (
+              <div className="card">
+                <div className="card-header">
+                  <h3 style={{ margin: 0 }}>{platformTitle('huawei')}</h3>
+                </div>
+                <div className="card-body">
+                  <p style={{ marginTop: 0 }}>
+                    لم يتم إعداد تحديثات هواوي بعد. أجهزة هواوي بدون خدمات جوجل تحدّث من AppGallery
+                    ولها إصدار ورابط خاصان بها. لن يظهر تحديث لأحد حتى تضبط الإصدار والرابط وتحفظ.
+                  </p>
+                  <button
+                    type="button"
+                    className="save-btn small-action"
+                    disabled={loadingVersions}
+                    onClick={() => createPlatformVersion('huawei')}
+                  >
+                    {loadingVersions ? 'جاري الإنشاء...' : 'إنشاء إعدادات هواوي'}
+                  </button>
+                </div>
+              </div>
+            )}
 
           </div>
         )}

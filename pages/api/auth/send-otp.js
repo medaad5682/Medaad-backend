@@ -1,6 +1,7 @@
 // pages/api/auth/send-otp.js
 import { supabase } from '../../../lib/supabaseClient';
 import { requestOtp, maskEmail } from '../../../lib/otpHelper';
+import { verifyClientAttestation, softUserIdFromRequest, ATTESTATION_FAILED_MESSAGE } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME_REGEX = /^[a-zA-Z0-9]+$/;
@@ -18,6 +19,21 @@ export default async (req, res) => {
 
   let { email, purpose, username, phone, identifier } = req.body;
   purpose = ALLOWED_PURPOSES.includes(purpose) ? purpose : 'signup';
+
+  // 🆕 إثبات أن الطلب من تطبيقنا الأصلي (يمنع البوتات من إغراق البريد برسائل OTP).
+  // reset_password يُفحص بعد تحديد الحساب أدناه لأن القائمة البيضاء تطابق user_id.
+  // signup: لا يوجد مستخدم بعد. change_email: المستخدم مسجّل فنأخذ id من JWT.
+  const rejectUnattested = (attestation) =>
+    res.status(attestation.status).json({
+      success: false,
+      message: ATTESTATION_FAILED_MESSAGE,
+      code: attestation.reason,
+    });
+
+  if (purpose !== 'reset_password') {
+    const attestation = await verifyClientAttestation(req, [softUserIdFromRequest(req)], 'SendOtp API');
+    if (!attestation.ok) return rejectUnattested(attestation);
+  }
 
   try {
     // ============================================================
@@ -52,6 +68,11 @@ export default async (req, res) => {
       }
 
       const { data: existing } = await query.maybeSingle();
+
+      // 🆕 الإثبات قبل أي رد يكشف وجود الحساب من عدمه (حتى لا يفرّق به غير الموثَّق)،
+      //    مع مطابقة القائمة البيضاء على user_id الحساب إن وُجد.
+      const resetAttestation = await verifyClientAttestation(req, [existing?.id], 'SendOtp API (reset)');
+      if (!resetAttestation.ok) return rejectUnattested(resetAttestation);
 
       if (!existing || !existing.email) {
         return res.status(400).json(genericError);

@@ -1,7 +1,7 @@
 import { verifyTeacher } from '../../../lib/teacherAuth';
 import { checkTeacherPermission } from '../../../lib/teacherPermissions'; // ✅ التحقق من صلاحيات المعلم
 import { supabase } from '../../../lib/supabaseClient'; // ✅ استيراد قاعدة البيانات
-import admin from '../../../lib/firebaseAdmin'; // ✅ استيراد فايربيز للإشعارات
+import { sendToTopicOrThrow } from '../../../lib/pushService'; // ✅ إرسال الإشعارات (FCM + HMS)
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
@@ -170,15 +170,12 @@ export default async (req, res) => {
                 const courseTitle = chapter.subjects?.courses?.title || 'تحديث جديد';
                 const itemTitle = title || 'ملف PDF جديد';
                 
-                const message = {
-                    notification: { title: courseTitle, body: `تم رفع ملف جديد: ${itemTitle}` },
-                    topic: `subject_${subjectId}`,
-                    android: { priority: 'high', notification: { sound: 'default' } },
-                    apns: { payload: { aps: { sound: 'default', badge: 1, 'content-available': 1 } } },
-                    data: { click_action: 'FLUTTER_NOTIFICATION_CLICK', type: 'subject', id: subjectId.toString() }
-                };
-
-                await admin.messaging().send(message);
+                await sendToTopicOrThrow(`subject_${subjectId}`, {
+                    title: courseTitle,
+                    body: `تم رفع ملف جديد: ${itemTitle}`,
+                    type: 'subject',
+                    data: { id: subjectId.toString() }
+                });
 
                 await supabase.from('notifications').insert({
                     title: courseTitle,
@@ -190,7 +187,7 @@ export default async (req, res) => {
                 console.log(`✅ Notification sent for uploaded file: ${itemTitle}`);
             }
         } catch (notifyErr) {
-            console.error("⚠️ FCM Notify Error (Upload):", notifyErr.message);
+            console.error("⚠️ Push Notify Error (Upload):", notifyErr.message);
         }
     }
 

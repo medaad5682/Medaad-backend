@@ -1,7 +1,7 @@
 import { supabase } from '../../../lib/supabaseClient';
 import jwt from 'jsonwebtoken';
 import admin from '../../../lib/firebaseAdmin'; // ✅ إضافة استيراد فايربيز آدمن للتحقق
-import { verifyAppCheckWithWhitelist } from '../../../lib/appCheckWhitelist'; // 🆕 القائمة البيضاء
+import { verifyClientAttestation } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 import { isAccessRowActive } from '../../../lib/accessExpiryHelper'; // ⏳ فحص انتهاء صلاحية الوصول (Feature B)
 
 export default async (req, res) => {
@@ -23,7 +23,7 @@ export default async (req, res) => {
   // 🚀 التحقق من Firebase App Check أولاً قبل أي شيء
   // 🚀 🆕 + مراعاة القائمة البيضاء اليدوية (user_id)
   // 🚀 =========================================================
-  const appCheckResult = await verifyAppCheckWithWhitelist(
+  const appCheckResult = await verifyClientAttestation(
     req,
     [softUserIdForWhitelist],
     'CourseSalesDetails API'

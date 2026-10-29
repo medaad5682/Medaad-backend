@@ -1,7 +1,7 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { verifyTeacher } from '../../../lib/teacherAuth';
 import { checkTeacherPermission } from '../../../lib/teacherPermissions'; // ✅ التحقق من صلاحيات المعلم
-import admin from '../../../lib/firebaseAdmin'; // ✅ تم استيراد فايربيز لإرسال الإشعارات
+import { sendToTopicOrThrow } from '../../../lib/pushService'; // ✅ إرسال الإشعارات (FCM + HMS)
 
 export default async (req, res) => {
   // التحقق من صلاحية المعلم
@@ -169,14 +169,12 @@ export default async (req, res) => {
             if (wantsNotify && startsNow) {
                 try {
                     const courseTitle = subjectInfo.courses?.title || 'تحديث جديد';
-                    const message = {
-                        notification: { title: courseTitle, body: `🔔 بدأ الاختبار الآن: ${title}` },
-                        topic: `subject_${subjectId}`,
-                        android: { priority: 'high', notification: { sound: 'default', priority: 'max', channelId: 'fcm_channel' } },
-                        apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default', badge: 1, 'content-available': 1 } } },
-                        data: { click_action: 'FLUTTER_NOTIFICATION_CLICK', type: 'exam', id: newExam.id.toString(), subject_id: subjectId.toString() }
-                    };
-                    await admin.messaging().send(message);
+                    await sendToTopicOrThrow(`subject_${subjectId}`, {
+                        title: courseTitle,
+                        body: `🔔 بدأ الاختبار الآن: ${title}`,
+                        type: 'exam',
+                        data: { id: newExam.id.toString(), subject_id: subjectId.toString() }
+                    });
                     await supabase.from('notifications').insert({
                         title: courseTitle,
                         body: `🔔 بدأ الاختبار الآن: ${title}`,
@@ -187,7 +185,7 @@ export default async (req, res) => {
                     await supabase.from('exams').update({ notify_students: false }).eq('id', newExam.id);
                     console.log(`✅ Exam notification sent immediately for: ${title}`);
                 } catch (notifyErr) {
-                    console.error("⚠️ FCM Exam Notify Error:", notifyErr.message);
+                    console.error("⚠️ Push Exam Notify Error:", notifyErr.message);
                 }
             }
         } 

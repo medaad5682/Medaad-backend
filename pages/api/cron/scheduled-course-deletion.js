@@ -1,6 +1,6 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { deepDeleteCourse } from '../../../lib/courseDeletionHelper';
-import admin from '../../../lib/firebaseAdmin';
+import { sendToUser, hasPushToken, PUSH_USER_COLUMNS } from '../../../lib/pushService';
 
 // ============================================================
 // 🗓️ Cron Job: حذف الكورسات المجدولة للحذف (Feature A)
@@ -131,7 +131,7 @@ async function notifyTeacherCourseDeleted(teacherId, courseTitle) {
   try {
     const { data: teacherUser } = await supabase
       .from('users')
-      .select('id, fcm_token')
+      .select(PUSH_USER_COLUMNS)
       .eq('id', teacherId)
       .maybeSingle();
 
@@ -146,30 +146,14 @@ async function notifyTeacherCourseDeleted(teacherId, courseTitle) {
       sender_role: 'super_admin'
     });
 
-    if (!teacherUser?.fcm_token) return; // المعلم لم يفتح التطبيق بعد، لا يوجد توكن
+    if (!hasPushToken(teacherUser)) return; // المعلم لم يفتح التطبيق بعد، لا يوجد توكن
 
-    await admin.messaging().send({
-      token: teacherUser.fcm_token,
-      notification: { title, body },
-      android: {
-        priority: 'high',
-        notification: {
-          sound: 'default',
-          priority: 'max',
-          channelId: 'fcm_channel',
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK'
-        }
-      },
-      apns: {
-        headers: { 'apns-priority': '10' },
-        payload: { aps: { sound: 'default', badge: 1, contentAvailable: true } }
-      },
-      data: {
-        click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        type: 'course_scheduled_deletion'
-      }
+    await sendToUser(teacherUser, {
+      title,
+      body,
+      type: 'course_scheduled_deletion'
     });
   } catch (err) {
-    console.error('⚠️ [scheduled-course-deletion] FCM teacher notify error:', err.message);
+    console.error('⚠️ [scheduled-course-deletion] push teacher notify error:', err.message);
   }
 }

@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { BASE_URL } from '../../../lib/config'; // ✅ 1. استيراد ملف الإعدادات الموحد
 import admin from '../../../lib/firebaseAdmin'; // ✅ إضافة استيراد فايربيز آدمن للتحقق
-import { verifyAppCheckWithWhitelist } from '../../../lib/appCheckWhitelist'; // 🆕 القائمة البيضاء
+import { verifyClientAttestation } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 
 export default async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ message: 'Method Not Allowed' });
@@ -30,10 +30,11 @@ export default async (req, res) => {
     // 🚀 التحقق من Firebase App Check أولاً لمنع هجمات البوتات (Brute-force/Spam)
     // 🚀 🆕 + مراعاة القائمة البيضاء اليدوية (بناءً على user_id)
     // 🚀 =========================================================
-    const appCheckResult = await verifyAppCheckWithWhitelist(
+    const appCheckResult = await verifyClientAttestation(
       req,
       [user?.id],
-      'Login API'
+      'Login API',
+      { deviceId } // 🆕 توكن هواوي يُربط ببصمة الجهاز المرسلة في الـ body
     );
 
     if (!appCheckResult.ok) {

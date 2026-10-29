@@ -1,6 +1,6 @@
 import { supabase } from '../../../lib/supabaseClient';
 import jwt from 'jsonwebtoken';
-import { verifyAppCheckWithWhitelist } from '../../../lib/appCheckWhitelist'; // 🆕 القائمة البيضاء
+import { verifyClientAttestation } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 
 // ============================================================
 // 🔎 بحث عام في كل كورسات المتجر
@@ -31,7 +31,7 @@ export default async (req, res) => {
     }
   }
 
-  const appCheckResult = await verifyAppCheckWithWhitelist(req, [softUserIdForWhitelist], 'SearchCourses API');
+  const appCheckResult = await verifyClientAttestation(req, [softUserIdForWhitelist], 'SearchCourses API');
   if (!appCheckResult.ok) {
     return res.status(appCheckResult.status).json({ message: appCheckResult.message });
   }

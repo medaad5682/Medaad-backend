@@ -1,6 +1,6 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
-import admin from '../../../../lib/firebaseAdmin';
+import { sendToUser, hasPushToken, PUSH_USER_COLUMNS } from '../../../../lib/pushService';
 
 // ============================================================
 // POST /api/dashboard/teacher/publish-grades
@@ -152,37 +152,32 @@ export default async (req, res) => {
     try {
       const { data: studentUser } = await supabase
         .from('users')
-        .select('id, fcm_token, first_name')
+        .select(`${PUSH_USER_COLUMNS}, first_name`)
         .eq('id', attempt.user_id)
         .single();
 
-      if (studentUser?.fcm_token) {
+      if (hasPushToken(studentUser)) {
         const examTitle = attempt.exams?.title || 'امتحانك';
-        const message = {
-          notification: {
-            title: 'تم تصحيح نتيجتك ✅',
-            body: `تم اعتماد نتيجة امتحان "${examTitle}"، اضغط لعرض الدرجة.`
-          },
-          token: studentUser.fcm_token,
-          android: { priority: 'high', notification: { sound: 'default' } },
-          apns: { payload: { aps: { sound: 'default', badge: 1, 'content-available': 1 } } },
+        const pushResult = await sendToUser(studentUser, {
+          title: 'تم تصحيح نتيجتك ✅',
+          body: `تم اعتماد نتيجة امتحان "${examTitle}"، اضغط لعرض الدرجة.`,
+          type: 'exam_result',
           data: {
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-            type: 'exam_result',
             id: String(attempt.exam_id),
             attempt_id: String(attemptId)
           }
-        };
-
-        await admin.messaging().send(message);
-
-        await supabase.from('notifications').insert({
-          title: 'تم تصحيح نتيجتك ✅',
-          body: `تم اعتماد نتيجة امتحان "${examTitle}"، اضغط لعرض الدرجة.`,
-          target_type: 'user',
-          target_id: String(attempt.user_id),
-          sender_role: 'teacher'
         });
+
+        // نفس السلوك السابق: لا نسجّل الإشعار في السجل إذا فشل الإرسال
+        if (pushResult.sent) {
+          await supabase.from('notifications').insert({
+            title: 'تم تصحيح نتيجتك ✅',
+            body: `تم اعتماد نتيجة امتحان "${examTitle}"، اضغط لعرض الدرجة.`,
+            target_type: 'user',
+            target_id: String(attempt.user_id),
+            sender_role: 'teacher'
+          });
+        }
       }
     } catch (notifyErr) {
       // لا نفشل الطلب بالكامل إذا فشل الإشعار فقط

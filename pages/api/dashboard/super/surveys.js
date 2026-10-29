@@ -1,6 +1,6 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
-import admin from '../../../../lib/firebaseAdmin';
+import { sendToTopicOrThrow } from '../../../../lib/pushService';
 
 // إرسال إشعار جماعي (Push) لكل الطلاب بإنشاء استبيان جديد.
 // لا يرمي أخطاء للخارج أبداً — فشل الإشعار لا يجب أن يفشل إنشاء الاستبيان.
@@ -9,22 +9,11 @@ async function notifyStudentsAboutSurvey(survey) {
     const title = '📋 استبيان جديد';
     const body = survey.title || 'يوجد استبيان جديد بانتظارك، شاركنا رأيك!';
 
-    await admin.messaging().send({
-      topic: 'all_users',
-      notification: { title, body },
-      android: {
-        priority: 'high',
-        notification: { sound: 'default', priority: 'max', channelId: 'fcm_channel', clickAction: 'FLUTTER_NOTIFICATION_CLICK' },
-      },
-      apns: {
-        headers: { 'apns-priority': '10' },
-        payload: { aps: { sound: 'default', badge: 1, contentAvailable: true } },
-      },
-      data: {
-        click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        type: 'survey',
-        id: survey.id.toString(),
-      },
+    await sendToTopicOrThrow('all_users', {
+      title,
+      body,
+      type: 'survey',
+      data: { id: survey.id.toString() },
     });
 
     await supabase.from('notifications').insert({

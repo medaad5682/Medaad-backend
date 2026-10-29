@@ -1,7 +1,7 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { verifyTeacher } from '../../../lib/teacherAuth';
 import { checkTeacherPermission } from '../../../lib/teacherPermissions'; // ✅ التحقق من صلاحيات المعلم (يتحكم بها السوبر أدمن)
-import admin from '../../../lib/firebaseAdmin'; // ✅ استيراد أداة فايربيز لإرسال الإشعارات
+import { sendToTopicOrThrow } from '../../../lib/pushService'; // ✅ إرسال الإشعارات (FCM + HMS)
 import { deleteVideoViewLogs } from '../../../lib/videoViewLogsHelper'; // ✅ حذف سجلات مشاهدة الفيديو عند حذف المحتوى
 // ✅ منطق حذف الكورس بالكامل (والدوال المساعدة لتنظيف Bunny) بات مشتركاً في lib/courseDeletionHelper.js
 // بدلاً من تكراره هنا — يستخدمه أيضاً pages/api/dashboard/teacher/content.js وcron المستقبلي للحذف المجدول.
@@ -245,15 +245,12 @@ export default async (req, res) => {
                   const itemTitle = insertData.title || 'محتوى جديد';
                   const itemTypeName = type === 'videos' ? 'فيديو جديد' : 'ملف جديد';
 
-                  const message = {
-                      notification: { title: courseTitle, body: `تم رفع ${itemTypeName}: ${itemTitle}` },
-                      topic: `subject_${subjectInfo.subjectId}`, 
-                      android: { priority: 'high', notification: { sound: 'default' } },
-                      apns: { payload: { aps: { sound: 'default', badge: 1, 'content-available': 1 } } },
-                      data: { click_action: 'FLUTTER_NOTIFICATION_CLICK', type: 'subject', id: subjectInfo.subjectId.toString() }
-                  };
-
-                  await admin.messaging().send(message);
+                  await sendToTopicOrThrow(`subject_${subjectInfo.subjectId}`, {
+                      title: courseTitle,
+                      body: `تم رفع ${itemTypeName}: ${itemTitle}`,
+                      type: 'subject',
+                      data: { id: subjectInfo.subjectId.toString() }
+                  });
 
                   await supabase.from('notifications').insert({
                       title: courseTitle,
@@ -264,7 +261,7 @@ export default async (req, res) => {
                   });
               }
           } catch (notifyErr) {
-              console.error("⚠️ FCM Notify Error:", notifyErr.message);
+              console.error("⚠️ Push Notify Error:", notifyErr.message);
           }
       }
 

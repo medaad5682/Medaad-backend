@@ -1,7 +1,7 @@
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { checkTeacherPermission } from '../../../../lib/teacherPermissions'; // ✅ التحقق من صلاحيات المعلم
 import { supabase } from '../../../../lib/supabaseClient';
-import admin from '../../../../lib/firebaseAdmin'; // ✅ استيراد فايربيز لإرسال الإشعارات
+import { sendToTopicOrThrow } from '../../../../lib/pushService'; // ✅ إرسال الإشعارات (FCM + HMS)
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
@@ -207,28 +207,13 @@ export default async (req, res) => {
                     const courseTitle = info.subjects?.courses?.title || 'تحديث جديد في الكورس';
                     const subjectId = info.subject_id;
 
-                    const message = {
-                        notification: { 
-                            title: courseTitle, 
-                            body: `تم رفع ملف: ${pdfTitle}` 
-                        },
-                        topic: `subject_${subjectId}`,
-                        android: { 
-                            priority: 'high', 
-                            notification: { sound: 'default' } 
-                        },
-                        apns: { 
-                            payload: { aps: { sound: 'default', badge: 1, 'content-available': 1 } } 
-                        },
-                        data: { 
-                            click_action: 'FLUTTER_NOTIFICATION_CLICK', 
-                            type: 'subject', 
-                            id: subjectId.toString() 
-                        }
-                    };
-
-                    // إرسال الإشعار عبر فايربيز
-                    await admin.messaging().send(message);
+                    // إرسال الإشعار (FCM + HMS)
+                    await sendToTopicOrThrow(`subject_${subjectId}`, {
+                        title: courseTitle,
+                        body: `تم رفع ملف: ${pdfTitle}`,
+                        type: 'subject',
+                        data: { id: subjectId.toString() }
+                    });
 
                     // حفظ الإشعار في جدول الإشعارات ليظهر للطالب داخل التطبيق لاحقاً
                     await supabase.from('notifications').insert({
@@ -241,7 +226,7 @@ export default async (req, res) => {
                     console.log(`[Upload Step 10] Notification sent and saved successfully.`);
                 }
             } catch (notifyErr) {
-                console.error("[Error] Failed to send FCM notification:", notifyErr.message);
+                console.error("[Error] Failed to send push notification:", notifyErr.message);
                 // لا نقوم بعمل throw هنا لكي لا يفشل الطلب الأصلي (الرفع تم بنجاح بالفعل)
             }
         }

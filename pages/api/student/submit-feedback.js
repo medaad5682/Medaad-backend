@@ -1,6 +1,6 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper';
-import admin from '../../../lib/firebaseAdmin'; // ✅ لإرسال إشعار للمدرس عند وجود تقييم جديد
+import { sendToUser, hasPushToken, PUSH_USER_COLUMNS } from '../../../lib/pushService'; // ✅ لإرسال إشعار للمدرس عند وجود تقييم جديد
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ message: 'Method not allowed' });
@@ -53,45 +53,39 @@ export default async function handler(req, res) {
       if (teacherId) {
         const { data: teacherUser } = await supabase
           .from('users')
-          .select('id, fcm_token')
+          .select(PUSH_USER_COLUMNS)
           .eq('teacher_profile_id', teacherId)
           .eq('role', 'teacher')
           .maybeSingle();
 
-        if (teacherUser?.fcm_token) {
+        if (hasPushToken(teacherUser)) {
           const notifTitle = courseTitle; // 👈 اسم الكورس كعنوان (Head) للإشعار
           const notifBody = `📝 تقييم جديد على فصل "${chapterTitle}" — مادة: ${subjectTitle}`;
 
-          await admin.messaging().send({
-            token: teacherUser.fcm_token,
-            notification: { title: notifTitle, body: notifBody },
-            android: {
-              priority: 'high',
-              notification: { sound: 'default', priority: 'max', channelId: 'fcm_channel', clickAction: 'FLUTTER_NOTIFICATION_CLICK' }
-            },
-            apns: {
-              headers: { 'apns-priority': '10' },
-              payload: { aps: { sound: 'default', badge: 1, contentAvailable: true } }
-            },
+          const pushResult = await sendToUser(teacherUser, {
+            title: notifTitle,
+            body: notifBody,
+            type: 'chapter_feedback',
             data: {
-              click_action: 'FLUTTER_NOTIFICATION_CLICK',
-              type: 'chapter_feedback',
               chapter_id: chapter_id.toString(),
               id: newFeedback?.id ? newFeedback.id.toString() : ''
             }
           });
 
-          await supabase.from('notifications').insert({
-            title: notifTitle,
-            body: notifBody,
-            target_type: 'chapter_feedback',
-            target_id: newFeedback?.id ? newFeedback.id.toString() : chapter_id.toString(),
-            sender_role: 'student'
-          });
+          // نفس السلوك السابق: لا نسجّل الإشعار في السجل إذا فشل الإرسال
+          if (pushResult.sent) {
+            await supabase.from('notifications').insert({
+              title: notifTitle,
+              body: notifBody,
+              target_type: 'chapter_feedback',
+              target_id: newFeedback?.id ? newFeedback.id.toString() : chapter_id.toString(),
+              sender_role: 'student'
+            });
+          }
         }
       }
     } catch (notifyErr) {
-      console.error('⚠️ FCM Teacher Feedback Notify Error:', notifyErr.message);
+      console.error('⚠️ Push Teacher Feedback Notify Error:', notifyErr.message);
     }
 
     return res.status(200).json({ success: true, message: 'Feedback submitted successfully' });

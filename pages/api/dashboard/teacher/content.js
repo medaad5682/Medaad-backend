@@ -1,7 +1,7 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { checkTeacherPermission } from '../../../../lib/teacherPermissions'; // ✅ التحقق من صلاحيات المعلم (يتحكم بها السوبر أدمن)
-import admin from '../../../../lib/firebaseAdmin'; // ✅ استيراد فايربيز لإرسال الإشعارات
+import { sendToTopicOrThrow } from '../../../../lib/pushService'; // ✅ إرسال الإشعارات (FCM + HMS)
 import { deleteVideoViewLogs } from '../../../../lib/videoViewLogsHelper'; // ✅ حذف سجلات مشاهدة الفيديو عند حذف المحتوى
 // ✅ منطق حذف الكورس بالكامل (والدوال المساعدة لتنظيف Bunny) بات مشتركاً في lib/courseDeletionHelper.js
 // بدلاً من تكراره هنا — يستخدمه أيضاً pages/api/teacher/content.js وcron المستقبلي للحذف المجدول.
@@ -311,27 +311,12 @@ export default async (req, res) => {
                     const itemTitle = newItem.title;
                     const typeName = type === 'videos' ? 'فيديو' : 'ملف';
 
-                    const message = {
-                        notification: { 
-                            title: courseTitle, 
-                            body: `تم رفع ${typeName}: ${itemTitle}` 
-                        },
-                        topic: `subject_${subjectId}`,
-                        android: { 
-                            priority: 'high', 
-                            notification: { sound: 'default' } 
-                        },
-                        apns: { 
-                            payload: { aps: { sound: 'default', badge: 1, 'content-available': 1 } } 
-                        },
-                        data: { 
-                            click_action: 'FLUTTER_NOTIFICATION_CLICK', 
-                            type: 'subject', 
-                            id: subjectId.toString() 
-                        }
-                    };
-
-                    await admin.messaging().send(message);
+                    await sendToTopicOrThrow(`subject_${subjectId}`, {
+                        title: courseTitle,
+                        body: `تم رفع ${typeName}: ${itemTitle}`,
+                        type: 'subject',
+                        data: { id: subjectId.toString() }
+                    });
 
                     await supabase.from('notifications').insert({
                         title: courseTitle,

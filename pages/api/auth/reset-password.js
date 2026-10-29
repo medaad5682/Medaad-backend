@@ -2,6 +2,7 @@
 import { supabase } from '../../../lib/supabaseClient';
 import bcrypt from 'bcryptjs';
 import { consumeVerifyToken } from '../../../lib/otpHelper';
+import { verifyClientAttestation, ATTESTATION_FAILED_MESSAGE } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -28,6 +29,25 @@ export default async (req, res) => {
   const emailToCheck = email.trim().toLowerCase();
 
   try {
+    // 🆕 البحث عن الحساب مبكراً: نحتاج user_id لمطابقة القائمة البيضاء، ونتيجته
+    //    تُستخدم لاحقاً بدل استعلام ثانٍ.
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', emailToCheck)
+      .maybeSingle();
+
+    // 🆕 إثبات أن الطلب من تطبيقنا الأصلي. يتم *قبل* استهلاك verifyToken
+    //    (لمرة واحدة) حتى لا يضيع الرمز على المستخدم لو فشل الإثبات.
+    const attestation = await verifyClientAttestation(req, [user?.id], 'ResetPassword API');
+    if (!attestation.ok) {
+      return res.status(attestation.status).json({
+        success: false,
+        message: ATTESTATION_FAILED_MESSAGE,
+        code: attestation.reason,
+      });
+    }
+
     // تأكيد أن verifyToken صالح وفعلاً ناتج عن تحقق OTP ناجح لهذا البريد
     // بغرض "reset_password" تحديداً (لا يمكن استخدام توكن تسجيل الدخول هنا).
     const isEmailVerified = await consumeVerifyToken({
@@ -42,12 +62,6 @@ export default async (req, res) => {
         message: 'رمز التحقق غير صالح أو منتهي الصلاحية. يرجى إعادة طلب رمز جديد.',
       });
     }
-
-    const { data: user } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', emailToCheck)
-      .maybeSingle();
 
     if (!user) {
       return res.status(400).json({ success: false, message: 'لا يوجد حساب مرتبط بهذا البريد الإلكتروني' });

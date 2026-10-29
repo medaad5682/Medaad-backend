@@ -58,7 +58,7 @@
 // ===================================================================
 
 import { supabase } from '../../../lib/supabaseClient';
-import admin from '../../../lib/firebaseAdmin'; // ✅ لإرسال إشعار الطلاب بمجرد اكتمال التشفير فعلياً
+import { sendToTopicOrThrow } from '../../../lib/pushService'; // ✅ لإرسال إشعار الطلاب بمجرد اكتمال التشفير فعلياً (FCM + HMS)
 import crypto from 'crypto';
 import { createUploadLogger } from '../../../lib/uploadLogger';
 
@@ -133,24 +133,25 @@ async function sendVideoReadyNotification(row, log) {
   const courseTitle = chapterInfo.subjects?.courses?.title || 'تحديث جديد في الكورس';
   const videoTitle = row.title || 'فيديو جديد';
 
-  const message = {
-    notification: { title: courseTitle, body: `تم رفع فيديو: ${videoTitle}` },
-    topic: `subject_${subjectId}`,
-    android: { priority: 'high', notification: { sound: 'default' } },
-    apns: { payload: { aps: { sound: 'default', badge: 1, 'content-available': 1 } } },
-    data: { click_action: 'FLUTTER_NOTIFICATION_CLICK', type: 'subject', id: subjectId.toString() },
+  const topic = `subject_${subjectId}`;
+  const pushPayload = {
+    title: courseTitle,
+    body: `تم رفع فيديو: ${videoTitle}`,
+    type: 'subject',
+    data: { id: subjectId.toString() },
   };
 
-  log.step('notify-send', `Sending FCM push notification for db_id=${row.id}...`, {
-    topic: message.topic, title: courseTitle, body: message.notification.body,
+  log.step('notify-send', `Sending push notification (FCM + HMS) for db_id=${row.id}...`, {
+    topic, title: courseTitle, body: pushPayload.body,
   });
-  const fcmStart = Date.now();
+  const pushStart = Date.now();
   try {
-    const fcmResponse = await admin.messaging().send(message);
-    log.success('notify-send', `FCM message sent successfully for db_id=${row.id} (${Date.now() - fcmStart}ms)`, { fcmMessageId: fcmResponse });
-  } catch (fcmErr) {
-    log.error('notify-send', `FCM send failed for db_id=${row.id}`, { message: fcmErr.message, code: fcmErr.code, stack: fcmErr.stack });
-    throw fcmErr;
+    // يرمي خطأ لو فشل الإرسال على كل الشبكات (نفس سلوك FCM السابق)
+    const pushResult = await sendToTopicOrThrow(topic, pushPayload);
+    log.success('notify-send', `Push sent successfully for db_id=${row.id} (${Date.now() - pushStart}ms)`, { pushResult });
+  } catch (pushErr) {
+    log.error('notify-send', `Push send failed for db_id=${row.id}`, { message: pushErr.message, code: pushErr.code, stack: pushErr.stack });
+    throw pushErr;
   }
 
   const notifRow = {

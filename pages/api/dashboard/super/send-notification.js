@@ -1,5 +1,5 @@
 import { supabase } from '../../../../lib/supabaseClient';
-import admin from '../../../../lib/firebaseAdmin';
+import { sendToUser, sendToTopicOrThrow, hasPushToken, PUSH_USER_COLUMNS } from '../../../../lib/pushService';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
 
 export default async (req, res) => {
@@ -19,44 +19,17 @@ export default async (req, res) => {
     let finalTargetId = targetId;
     
     // ==========================================================
-    // 🛠️ إعداد هيكل الرسالة لضمان الوصول الفوري (High Priority)
+    // 🛠️ إعداد الرسالة (الإعدادات الخاصة بالأولوية والقناة تُطبَّق داخل pushService)
     // ==========================================================
-    let message = {
-      notification: { title, body },
-      
-      // ✅ إعدادات أندرويد لإختراق وضع توفير الطاقة (Doze Mode)
-      android: {
-        priority: 'high', // ضروري جداً لوصول الإشعار والهاتف مغلق
-        notification: {
-          sound: 'default',
-          priority: 'max', // أقصى أولوية للعرض على الشاشة
-          channelId: 'fcm_channel', // يجب أن يطابق المعرف في كود Flutter
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK'
-        }
-      },
-      
-      // ✅ إعدادات آيفون (APNs) لضمان الوصول السريع
-      apns: {
-        headers: {
-          'apns-priority': '10', // أولوية قصوى لنظام iOS
-        },
-        payload: {
-          aps: {
-            sound: 'default',
-            badge: 1,
-            contentAvailable: true, // يسمح للتطبيق بمعالجة البيانات في الخلفية
-          },
-        },
-      },
-      
+    const payload = {
+      title,
+      body,
+      type: targetType,
       // البيانات الإضافية للتوجيه داخل التطبيق
-      data: { 
-        click_action: 'FLUTTER_NOTIFICATION_CLICK', 
-        type: targetType,
-        title: title,
-        body: body
-      }
+      data: { title, body }
     };
+    let targetUserToNotify = null;
+    let targetTopic = null;
 
     // ==========================================================
     // 🎯 استهداف مستخدم معين (طالب، مدرس، أو مشرف)
@@ -68,7 +41,7 @@ export default async (req, res) => {
 
         const { data: targetUser, error: userErr } = await supabase
             .from('users')
-            .select('id, fcm_token, first_name, role')
+            .select(`${PUSH_USER_COLUMNS}, first_name, role`)
             .or(`username.eq.${userIdentifier.trim()},phone.eq.${userIdentifier.trim()}`)
             .single();
 
@@ -76,14 +49,14 @@ export default async (req, res) => {
             return res.status(404).json({ success: false, message: 'لم يتم العثور على مستخدم بهذا الرقم/الاسم.' });
         }
 
-        if (!targetUser.fcm_token) {
+        if (!hasPushToken(targetUser)) {
             const roleName = targetUser.role === 'teacher' ? 'المدرس' : targetUser.role === 'moderator' ? 'المشرف' : 'الطالب';
             return res.status(400).json({ success: false, message: `${roleName} (${targetUser.first_name}) لم يقم بفتح التطبيق حتى الآن.` });
         }
 
-        // إرسال لتوكن الجهاز مباشرة
-        message.token = targetUser.fcm_token;
-        message.data.id = targetUser.id.toString();
+        // إرسال للمستخدم مباشرة (FCM أو HMS حسب جهازه)
+        targetUserToNotify = targetUser;
+        payload.data.id = targetUser.id.toString();
         finalTargetId = targetUser.id;
     } 
     // ==========================================================
@@ -99,13 +72,19 @@ export default async (req, res) => {
             topic = `subject_${targetId}`;
         }
         
-        message.topic = topic;
-        if (targetId) message.data.id = targetId.toString();
+        targetTopic = topic;
+        if (targetId) payload.data.id = targetId.toString();
     }
 
-    // الإرسال الفعلي عبر سيرفرات فايربيز
-    const fcmResponse = await admin.messaging().send(message);
-    console.log('FCM Success:', fcmResponse);
+    // الإرسال الفعلي (FCM + HMS)
+    if (targetUserToNotify) {
+      const pushResult = await sendToUser(targetUserToNotify, payload);
+      if (!pushResult.sent) throw new Error('فشل إرسال الإشعار للمستخدم');
+      console.log('Push Success (user):', pushResult.provider);
+    } else {
+      const pushResult = await sendToTopicOrThrow(targetTopic, payload);
+      console.log('Push Success (topic):', targetTopic, JSON.stringify(pushResult));
+    }
 
     // حفظ الإشعار في قاعدة البيانات
     const { error: dbError } = await supabase

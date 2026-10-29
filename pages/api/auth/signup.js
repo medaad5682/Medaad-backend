@@ -1,12 +1,39 @@
 import { supabase } from '../../../lib/supabaseClient';
 import bcrypt from 'bcryptjs';
 import { consumeVerifyToken } from '../../../lib/otpHelper';
+import { verifyClientAttestation, ATTESTATION_FAILED_MESSAGE } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default async (req, res) => {
   // السماح فقط بطلبات POST
   if (req.method !== 'POST') return res.status(405).json({ message: 'Method Not Allowed' });
+
+  // 🔐 🆕 App Secret (نفس بوابة login / send-otp / verify-otp): فحص رخيص قبل أي شيء آخر
+  const appSecret = req.headers['x-app-secret'];
+  if (!process.env.APP_SECRET || appSecret !== process.env.APP_SECRET) {
+    return res.status(403).json({ success: false, message: 'غير مصرح لك باستخدام هذا الرابط' });
+  }
+
+  // 🚀 =========================================================
+  // 🚀 🆕 خطوة 20: إنشاء الحساب يتطلب إثبات أن الطلب من تطبيقنا الأصلي
+  // 🚀 (Firebase App Check أو توكن هواوي)، مثل باقي نقاط الدخول، لمنع
+  // 🚀 البوتات من إنشاء حسابات وهمية.
+  // 🚀 لا يوجد user_id قبل إنشاء الحساب، لذلك لا مجال للقائمة البيضاء هنا
+  // 🚀 (candidates فارغة). توكن هواوي يُربط بهيدر x-device-id إن وُجد
+  // 🚀 (قبل أول تسجيل دخول لا يرسله التطبيق، فيُتحقق من التوكن فقط).
+  // 🚀 =========================================================
+  const attestation = await verifyClientAttestation(req, [], 'Signup API');
+
+  if (!attestation.ok) {
+    return res.status(attestation.status).json({
+      success: false,
+      // الرسالة تُعرض للمستخدم مباشرة في شاشة التسجيل، لذلك نرسلها بالعربية
+      message: ATTESTATION_FAILED_MESSAGE,
+      code: attestation.reason,
+    });
+  }
+  // =========================================================
 
   const { firstName, username, password, phone, email, verifyToken } = req.body;
 

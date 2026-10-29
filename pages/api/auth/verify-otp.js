@@ -1,5 +1,7 @@
 // pages/api/auth/verify-otp.js
 import { verifyOtp } from '../../../lib/otpHelper';
+import { supabase } from '../../../lib/supabaseClient';
+import { verifyClientAttestation, softUserIdFromRequest, ATTESTATION_FAILED_MESSAGE } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 
 const ALLOWED_PURPOSES = ['signup', 'reset_password', 'change_email'];
 
@@ -20,6 +22,23 @@ export default async (req, res) => {
   email = email.trim().toLowerCase();
 
   try {
+    // 🆕 إثبات أن الطلب من تطبيقنا الأصلي. للقائمة البيضاء: في reset_password نطابق
+    //    user_id صاحب البريد (نفس منطق send-otp)، وفي change_email نأخذ id من JWT.
+    const whitelistCandidates = [softUserIdFromRequest(req)];
+    if (purpose === 'reset_password') {
+      const { data: account } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
+      whitelistCandidates.push(account?.id);
+    }
+
+    const attestation = await verifyClientAttestation(req, whitelistCandidates, 'VerifyOtp API');
+    if (!attestation.ok) {
+      return res.status(attestation.status).json({
+        success: false,
+        message: ATTESTATION_FAILED_MESSAGE,
+        code: attestation.reason,
+      });
+    }
+
     const result = await verifyOtp({ email, code, purpose });
 
     if (!result.ok) {
