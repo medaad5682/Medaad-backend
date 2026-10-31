@@ -249,6 +249,41 @@ export default function SuperFinance() {
         // method 3: ما السعر المطبَّق على كل عنصر داخل هذا الطلب؟
         const perRequestMeta = new Map((meta.per_request || []).map(pr => [pr.request_id, pr]));
 
+        const fmt = (n) => Math.round(n).toLocaleString('en-US');
+        // ── جدول إجمالي الطلبات لكل عنصر (طريقة السعر الثابت فقط) ──
+        const itemsSummary = billingMethod === 'course_price' ? (meta.items_summary || []) : [];
+        const typeLabel = (t) => t === 'course' ? 'كورس' : t === 'subject' ? 'مادة' : t === 'package' ? 'باقة' : 'عنصر';
+        const escHtml = (v) => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        const itemsTotalCount = itemsSummary.reduce((a, r) => a + r.requests_count, 0);
+        const itemsTotalFee = itemsSummary.reduce((a, r) => a + r.total_fee, 0);
+        const itemsSummaryHtml = itemsSummary.length === 0 ? '' : `
+          <div style="margin:0 0 16px; page-break-inside: avoid; break-inside: avoid;">
+            <h3 style="margin:0 0 8px; font-size:15px; color:#14110c;">📊 إجمالي الطلبات لكل عنصر</h3>
+            <table style="width:100%; border-collapse:collapse; font-size:12px;">
+              <tr style="background:#14110c; color:#d4af6a; -webkit-print-color-adjust:exact; print-color-adjust:exact;">
+                <th style="padding:8px; text-align:right;">العنصر</th>
+                <th style="padding:8px;">النوع</th>
+                <th style="padding:8px;">عدد الطلبات</th>
+                <th style="padding:8px;">السعر الثابت</th>
+                <th style="padding:8px;">الإجمالي</th>
+              </tr>
+              ${itemsSummary.map(r => `
+                <tr style="border-bottom:1px solid #f0ece0;">
+                  <td style="padding:7px 8px;">${escHtml(r.title)}${r.parent_course ? `<div style="color:#8a7a50; font-size:11px;">تابع لكورس: ${escHtml(r.parent_course)}</div>` : ''}</td>
+                  <td style="padding:7px 8px; text-align:center;">${typeLabel(r.type)}</td>
+                  <td style="padding:7px 8px; text-align:center; font-weight:700;">${r.requests_count}</td>
+                  <td style="padding:7px 8px; text-align:center;">${r.unit_price === null ? '<span style="color:#dc2626;">بدون سعر</span>' : fmt(r.unit_price) + ' ج.م'}</td>
+                  <td style="padding:7px 8px; text-align:center; font-weight:700;">${fmt(r.total_fee)} ج.م</td>
+                </tr>`).join('')}
+              <tr style="background:#faf6ea; font-weight:800; -webkit-print-color-adjust:exact; print-color-adjust:exact;">
+                <td style="padding:8px;" colspan="2">الإجمالي</td>
+                <td style="padding:8px; text-align:center;">${itemsTotalCount}</td>
+                <td style="padding:8px;"></td>
+                <td style="padding:8px; text-align:center;">${fmt(itemsTotalFee)} ج.م</td>
+              </tr>
+            </table>
+          </div>`;
+
         const approvedCount = data.summary.total_approved_count || 0;
         const rejectedCount = data.summary.total_rejected_count || 0;
         const totalCount = approvedCount + rejectedCount;
@@ -272,7 +307,6 @@ export default function SuperFinance() {
           if (count > bestCourseCount) { bestCourseName = name; bestCourseCount = count; }
         });
 
-        const fmt = (n) => Math.round(n).toLocaleString('en-US');
         const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB').replace(/\//g, '-');
 
         const safeName = data.teacherName.replace(/\s+/g, '_');
@@ -483,6 +517,8 @@ export default function SuperFinance() {
                     </div>
                   </div>
                 </div>
+
+                ${itemsSummaryHtml}
 
                 <table class="report-table">
                   <tbody class="col-head-body">
