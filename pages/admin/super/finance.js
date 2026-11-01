@@ -221,7 +221,7 @@ export default function SuperFinance() {
         // ✅ نأخذ العمولة/الصافي جاهزين من الـ API (محسوبين بحسب طريقة هذا
         // المدرس تحديداً) بدلاً من إعادة حسابهما هنا كنسبة مئوية ثابتة —
         // كان هذا صحيحاً فقط طالما كل المدرسين على billing_method='percentage'.
-        const platformShare = Math.round(data.summary.platform_fee ?? (totalActual * percentage));
+        const platformShare = Math.floor((data.summary.platform_fee ?? (totalActual * percentage)) + 1e-9);
         const netProfit = Math.round(data.summary.net_profit ?? (totalActual - platformShare));
 
         // ── تسمية بطاقة "عمولة المنصة" تتغيّر حسب طريقة احتساب هذا المدرس ──
@@ -239,8 +239,8 @@ export default function SuperFinance() {
 
         // ── تفكيك الرسوم إلى كورسات/مواد منفردة مقابل باقات، فقط لو
         // كانت هناك باقات مُفعّلة فعلاً في الفترة (وإلا العرض عادي) ──
-        const coursesFee = round0(meta.courses_fee);
-        const packagesFee = round0(meta.packages_fee);
+        const coursesFee = Math.floor(Number(meta.courses_fee) || 0);
+        const packagesFee = Math.floor(Number(meta.packages_fee) || 0);
         const packagesCount = meta.packages_count || 0;
         const hasPackages = billingMethod === 'course_price' && packagesCount > 0;
 
@@ -250,6 +250,8 @@ export default function SuperFinance() {
         const perRequestMeta = new Map((meta.per_request || []).map(pr => [pr.request_id, pr]));
 
         const fmt = (n) => Math.round(n).toLocaleString('en-US');
+        // Fees are always rounded DOWN (75.5 -> 75), never up
+        const feeFmt = (n) => Math.floor((Number(n) || 0) + 1e-9).toLocaleString('en-US');
         // ── جدول إجمالي الطلبات لكل عنصر (طريقة السعر الثابت فقط) ──
         const itemsSummary = billingMethod === 'course_price' ? (meta.items_summary || []) : [];
         const typeLabel = (t) => t === 'course' ? 'كورس' : t === 'subject' ? 'مادة' : t === 'package' ? 'باقة' : 'عنصر';
@@ -273,13 +275,13 @@ export default function SuperFinance() {
                   <td style="padding:7px 8px; text-align:center;">${typeLabel(r.type)}</td>
                   <td style="padding:7px 8px; text-align:center; font-weight:700;">${r.requests_count}</td>
                   <td style="padding:7px 8px; text-align:center;">${r.unit_price === null ? '<span style="color:#dc2626;">بدون سعر</span>' : fmt(r.unit_price) + ' ج.م'}</td>
-                  <td style="padding:7px 8px; text-align:center; font-weight:700;">${fmt(r.total_fee)} ج.م</td>
+                  <td style="padding:7px 8px; text-align:center; font-weight:700;">${feeFmt(r.total_fee)} ج.م</td>
                 </tr>`).join('')}
               <tr style="background:#faf6ea; font-weight:800; -webkit-print-color-adjust:exact; print-color-adjust:exact;">
                 <td style="padding:8px;" colspan="2">الإجمالي</td>
                 <td style="padding:8px; text-align:center;">${itemsTotalCount}</td>
                 <td style="padding:8px;"></td>
-                <td style="padding:8px; text-align:center;">${fmt(itemsTotalFee)} ج.م</td>
+                <td style="padding:8px; text-align:center;">${feeFmt(itemsTotalFee)} ج.م</td>
               </tr>
             </table>
           </div>`;
@@ -461,11 +463,11 @@ export default function SuperFinance() {
                   <div class="card">
                     <div class="icn">%</div>
                     <div class="label">${commissionLabel}</div>
-                    <div class="value red">${fmt(platformShare)} ج.م</div>
+                    <div class="value red">${feeFmt(platformShare)} ج.م</div>
                     ${hasPackages ? `
                     <div class="subline">
-                      <span class="ok">🏷️ كورسات: ${fmt(coursesFee)} ج.م</span>
-                      <span class="no" style="color:#7c3aed;">📦 ${packagesCount} باقة: ${fmt(packagesFee)} ج.م</span>
+                      <span class="ok">🏷️ كورسات: ${feeFmt(coursesFee)} ج.م</span>
+                      <span class="no" style="color:#7c3aed;">📦 ${packagesCount} باقة: ${feeFmt(packagesFee)} ج.م</span>
                     </div>` : ''}
                   </div>
                   <div class="card">
