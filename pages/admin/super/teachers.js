@@ -26,6 +26,7 @@ const PERMISSION_ITEMS = [
   { key: 'can_upload_pdf', label: 'رفع ملفات PDF', icon: '📄' },
   { key: 'can_upload_video', label: 'رفع الفيديوهات', icon: '🎬' },
   { key: 'can_create_exam', label: 'إنشاء/تعديل الامتحانات', icon: '📝' },
+  { key: 'can_manage_flashcards', label: 'إنشاء/تعديل الفلاش كاردس', icon: '🗂️' },
 ];
 
 // --- مكون Toast للإشعارات ---
@@ -119,7 +120,7 @@ export default function SuperTeachers() {
   // --- حالة مودال صلاحيات المعلم (رفع PDF / فيديو / امتحانات) ---
   const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
   const [permTeacher, setPermTeacher] = useState(null); // { id, name }
-  const [permsData, setPermsData] = useState(null); // { can_upload_pdf, can_upload_video, can_create_exam }
+  const [permsData, setPermsData] = useState(null); // { can_upload_pdf, can_upload_video, can_create_exam, can_manage_flashcards }
   const [permsLoading, setPermsLoading] = useState(false);
   const [permsSaving, setPermsSaving] = useState(false);
 

@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { useBunnyUploadQueue } from '../../../hooks/useBunnyUploadQueue';
 import UploadQueueWidget from '../../../components/UploadQueueWidget';
+import FlashcardDeckEditor from '../../../components/FlashcardDeckEditor'; // 🗂️ محرر مجموعات الفلاش كاردس
 
 // --- أيقونات SVG (محدثة لتتوافق مع الألوان الديناميكية) ---
 const Icons = {
@@ -89,6 +90,9 @@ export default function ContentManager() {
   const chapterDragRef = useRef(null);
   const chapterDragOverRef = useRef(null);
 
+  // 🗂️ Flashcards: محرر المجموعات { deckId: number|null } — null = المحرر مغلق
+  const [deckEditor, setDeckEditor] = useState(null);
+
   // Exam Editor
   const [showExamSidebar, setShowExamSidebar] = useState(false);
   const [examForm, setExamForm] = useState({ id: null, title: '', duration: 30, requiresName: true, randQ: true, randO: true, startTime: '', endTime: '', questions: [], notifyStudents: false, allowRetake: false });
@@ -135,6 +139,7 @@ export default function ContentManager() {
     can_upload_pdf: 'تم إيقاف صلاحية رفع ملفات PDF لحسابك من قبل الإدارة.',
     can_upload_video: 'تم إيقاف صلاحية رفع الفيديوهات لحسابك من قبل الإدارة.',
     can_create_exam: 'تم إيقاف صلاحية إنشاء/تعديل الامتحانات لحسابك من قبل الإدارة.',
+    can_manage_flashcards: 'تم إيقاف صلاحية إنشاء/تعديل الفلاش كاردس لحسابك من قبل الإدارة.',
   };
 
   const fetchPermissions = async () => {
@@ -382,6 +387,7 @@ export default function ContentManager() {
       if (listType === 'courses') list = [...courses];
       else if (listType === 'subjects') list = [...selectedCourse.subjects];
       else if (listType === 'exams') list = [...selectedSubject.exams];
+      else if (listType === 'flashcard_decks') list = [...(selectedSubject.flashcard_decks || [])];
       else if (listType === 'videos') list = [...selectedChapter.videos];
       else if (listType === 'pdfs') list = [...selectedChapter.pdfs];
 
@@ -394,6 +400,7 @@ export default function ContentManager() {
       if (listType === 'courses') setCourses(list);
       else if (listType === 'subjects') setSelectedCourse({ ...selectedCourse, subjects: list });
       else if (listType === 'exams') setSelectedSubject({ ...selectedSubject, exams: list });
+      else if (listType === 'flashcard_decks') setSelectedSubject({ ...selectedSubject, flashcard_decks: list });
       else if (listType === 'videos') setSelectedChapter({ ...selectedChapter, videos: list });
       else if (listType === 'pdfs') setSelectedChapter({ ...selectedChapter, pdfs: list });
 
@@ -612,6 +619,38 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
       setRefreshingVideoId(null);
   };
     
+
+  // 🗂️ حذف/إخفاء مجموعة فلاش كاردس (API مستقل — content API لا يقبل هذا النوع)
+  const handleDeleteDeck = (deck) => showConfirm(`حذف المجموعة «${deck.title}» وكل بطاقاتها نهائياً؟`, async () => {
+      closeConfirm();
+      setLoading(true);
+      try {
+          const res = await fetch('/api/dashboard/teacher/flashcards', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ action: 'delete_deck', payload: { id: deck.id } })
+          });
+          const data = await res.json();
+          if (res.ok) { showAlert('success', 'تم حذف المجموعة'); await refreshView(); }
+          else showAlert('error', data.error || 'حدث خطأ');
+      } catch (e) { showAlert('error', 'خطأ في الاتصال'); }
+      setLoading(false);
+  });
+
+  const handleToggleDeck = async (deck) => {
+      if (!isPermAllowed('can_manage_flashcards')) return showAlert('error', PERMISSION_DENIED_MSG.can_manage_flashcards);
+      const next = deck.is_active === false; // الحالة الجديدة
+      // تحديث تفاؤلي ثم تأكيد من السيرفر
+      setSelectedSubject(prev => ({ ...prev, flashcard_decks: (prev.flashcard_decks || []).map(d => d.id === deck.id ? { ...d, is_active: next } : d) }));
+      try {
+          const res = await fetch('/api/dashboard/teacher/flashcards', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ action: 'toggle_active', payload: { id: deck.id, is_active: next } })
+          });
+          if (!res.ok) { const data = await res.json(); showAlert('error', data.error || 'حدث خطأ'); refreshView(); }
+      } catch (e) { showAlert('error', 'خطأ في الاتصال'); refreshView(); }
+  };
 
   const handleDelete = (type, id) => showConfirm('هل أنت متأكد من الحذف النهائي؟', async () => {
       await apiCall('delete', type, { id });
@@ -1025,6 +1064,50 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                       ))}
                   </div>
               </div>
+
+              {/* 🗂️ الفلاش كاردس */}
+              <div className="panel">
+                  <div className="panel-head">
+                      <h3>🗂️ الفلاش كاردس</h3>
+                      <button
+                          className={`btn-small${!isPermAllowed('can_manage_flashcards') ? ' is-locked' : ''}`}
+                          title={!isPermAllowed('can_manage_flashcards') ? PERMISSION_DENIED_MSG.can_manage_flashcards : ''}
+                          onClick={() => {
+                              if (!isPermAllowed('can_manage_flashcards')) return showAlert('error', PERMISSION_DENIED_MSG.can_manage_flashcards);
+                              setDeckEditor({ deckId: null });
+                          }}
+                      > {Icons.add} إنشاء</button>
+                  </div>
+                  <div className="exam-grid">
+                      {(selectedSubject.flashcard_decks || []).map((deck, index) => (
+                          <div key={deck.id} className={`exam-card-item draggable-item${deck.is_active === false ? ' deck-hidden' : ''}`} draggable onDragStart={(e) => onDragStart(e, index)} onDragEnter={(e) => onDragEnter(e, index)} onDragOver={onDragOver} onDragEnd={(e) => onDragEnd(e, 'flashcard_decks')}>
+                              <div className="drag-handle-abs" onClick={e => e.stopPropagation()}>{Icons.drag}</div>
+                              <div className="exam-icon deck-icon">🗂️</div>
+                              <div className="exam-info">
+                                  <h4>{deck.title}</h4>
+                                  <span>{deck.card_count} بطاقة{deck.is_active === false ? ' • مخفية' : ''}</span>
+                              </div>
+                              <div className="exam-actions">
+                                  <label className="switch deck-switch" title={deck.is_active === false ? 'إظهار للطلاب' : 'إخفاء عن الطلاب'}>
+                                      <input type="checkbox" checked={deck.is_active !== false} onChange={() => handleToggleDeck(deck)} />
+                                      <span className="slider round"></span>
+                                  </label>
+                                  <button
+                                      title={!isPermAllowed('can_manage_flashcards') ? PERMISSION_DENIED_MSG.can_manage_flashcards : 'تعديل'}
+                                      onClick={() => {
+                                          if (!isPermAllowed('can_manage_flashcards')) return showAlert('error', PERMISSION_DENIED_MSG.can_manage_flashcards);
+                                          setDeckEditor({ deckId: deck.id });
+                                      }}
+                                  >{Icons.edit}</button>
+                                  <button title="حذف" className="danger" onClick={() => handleDeleteDeck(deck)}>{Icons.trash}</button>
+                              </div>
+                          </div>
+                      ))}
+                      {(selectedSubject.flashcard_decks || []).length === 0 && (
+                          <p style={{ color: 'var(--text-muted)', margin: 0 }}>لا توجد مجموعات فلاش كاردس بعد.</p>
+                      )}
+                  </div>
+              </div>
           </div>
       )}
 
@@ -1395,6 +1478,20 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
       )}
       
 
+      {/* 🗂️ Flashcard Deck Editor */}
+      {deckEditor && selectedSubject && (
+          <FlashcardDeckEditor
+              key={deckEditor.deckId || 'new'}
+              deckId={deckEditor.deckId}
+              subjectId={selectedSubject.id}
+              canManage={isPermAllowed('can_manage_flashcards')}
+              deniedMessage={PERMISSION_DENIED_MSG.can_manage_flashcards}
+              showAlert={showAlert}
+              onSaved={() => refreshView()}
+              onClose={() => setDeckEditor(null)}
+          />
+      )}
+
       {/* 4. Exam Editor */}
       {modalType === 'exam_editor' && (
           <div className="editor-overlay">
@@ -1507,7 +1604,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                                   <input type="file" hidden accept="image/*" onChange={handleImageUpload} disabled={uploadingImg} />
                               </label>
                               {uploadingImg && <span style={{marginLeft: '10px', color: 'var(--gold)', fontSize: '0.9em', fontWeight: 'bold'}}>جاري رفع الصورة... ⏳</span>}
-                              {currentQ.image && <img src={`/api/dashboard/teacher/file-proxy?type=exam_images&filename=${currentQ.image}`} alt="preview" />}
+                              {currentQ.image && <img src={`/api/admin/file-proxy?type=exam_images&filename=${currentQ.image}`} alt="preview" />}
                           </div>
 
                           {currentQ.questionType === 'essay' ? (
@@ -1823,7 +1920,10 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
         .exam-icon { color: var(--gold); background: var(--gold-dim); padding: 12px; border-radius: 10px; }
         .exam-info h4 { margin: 0 0 4px 0; color: var(--text-primary); font-size: 1rem; }
         .exam-info span { font-size: 0.8rem; color: var(--text-muted); }
-        .exam-actions { display: flex; gap: 6px; z-index: 10; }
+        .exam-actions { display: flex; gap: 6px; z-index: 10; align-items: center; }
+        .deck-icon { color: #8B5CF6; background: rgba(139, 92, 246, 0.15); }
+        .deck-hidden { opacity: 0.6; }
+        .deck-switch { transform: scale(0.8); }
         .exam-actions button { background: var(--bg-elevated); border: 1px solid transparent; padding: 6px; border-radius: 6px; color: var(--text-secondary); cursor: pointer; transition: 0.2s; }
         .exam-actions button:hover { background: var(--bg-hover); color: var(--gold); border-color: var(--border-accent); }
         .exam-actions button.danger:hover { background: rgba(239, 68, 68, 0.15); color: #ef4444; border-color: rgba(239, 68, 68, 0.3); }

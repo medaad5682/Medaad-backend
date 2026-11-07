@@ -40,7 +40,7 @@ async function getNextSortOrder(type, data, teacherId = null) {
       if (data.course_id) query = query.eq('course_id', data.course_id);
     } else if (type === 'chapters') {
       if (data.subject_id) query = query.eq('subject_id', data.subject_id);
-    } else if (type === 'exams') {
+    } else if (type === 'exams' || type === 'flashcard_decks') {
       if (data.subject_id) query = query.eq('subject_id', data.subject_id);
     } else if (type === 'videos' || type === 'pdfs') {
       if (data.chapter_id) query = query.eq('chapter_id', data.chapter_id);
@@ -120,6 +120,10 @@ export default async (req, res) => {
                     id, title, duration_minutes, start_time, end_time, 
                     requires_student_name, randomize_questions, randomize_options, 
                     sort_order, is_active
+                ),
+                flashcard_decks (
+                    id, title, description, sort_order, is_active, updated_at,
+                    flashcards ( count )
                 )
             `)
             .eq('id', id)
@@ -139,6 +143,14 @@ export default async (req, res) => {
           }
           if (subject.exams) {
               subject.exams.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+          }
+          if (subject.flashcard_decks) {
+              // 🗂️ تحويل flashcards:[{count:n}] إلى card_count وترتيب المجموعات
+              subject.flashcard_decks.forEach(d => {
+                  d.card_count = d.flashcards?.[0]?.count ?? 0;
+                  delete d.flashcards;
+              });
+              subject.flashcard_decks.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
           }
 
           return res.status(200).json({ success: true, subject });
@@ -195,6 +207,11 @@ export default async (req, res) => {
       if (data && !data.bunny_video_id) {
         data.duration = data.duration || '00:00';
       }
+    }
+
+    // 🗂️ الفلاش كاردس تُدار حصراً عبر /api/dashboard/teacher/flashcards (صلاحيات + تحقق + حفظ ذكي للبطاقات)
+    if (type === 'flashcard_decks' || type === 'flashcards') {
+      return res.status(400).json({ error: 'استخدم واجهة الفلاش كاردس لإدارة هذا النوع.' });
     }
 
     const checkCourseOwnership = async (courseId) => {

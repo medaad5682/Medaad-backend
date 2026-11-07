@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper';
+import { checkFlashcardImageAccess } from '../../../lib/flashcardAccess'; // 🗂️ صور الفلاش كاردس
 import fs from 'fs';
 import path from 'path';
 
@@ -35,11 +36,19 @@ export default async (req, res) => {
             return res.status(403).json({ error: 'Access Denied' });
         }
     } else {
-        // إذا لم نجد الصورة في جدول الأسئلة، نتحقق فقط من أن المستخدم مسجل دخول (توكن سليم)
-        // هذا للأمان العام لمنع الوصول العشوائي
-        const isUserValid = await checkUserAccess(req);
-        if (!isUserValid) {
-             return res.status(401).json({ error: 'Unauthorized' });
+        // 🗂️ هل الصورة تخص بطاقة فلاش كارد؟ (قد تطابق عدة مجموعات منسوخة ⇐ يكفي وصول لأي منها)
+        const fc = await checkFlashcardImageAccess(req, file_id);
+        if (fc.referenced) {
+            if (!fc.allowed) {
+                return res.status(403).json({ error: 'Access Denied' });
+            }
+        } else {
+            // إذا لم نجد الصورة في الأسئلة ولا في البطاقات، نتحقق فقط من أن المستخدم مسجل دخول (توكن سليم)
+            // هذا للأمان العام لمنع الوصول العشوائي
+            const isUserValid = await checkUserAccess(req);
+            if (!isUserValid) {
+                 return res.status(401).json({ error: 'Unauthorized' });
+            }
         }
     }
 

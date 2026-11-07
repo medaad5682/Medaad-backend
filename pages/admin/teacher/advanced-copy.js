@@ -13,6 +13,7 @@ const Icons = {
     exam: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>,
     video: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>,
     pdf: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>,
+    deck: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="6" width="15" height="13" rx="2"></rect><path d="M7 3h12a2 2 0 0 1 2 2v11"></path></svg>,
     arrowDown: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>,
     check: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>,
     chevronDown: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>,
@@ -38,7 +39,7 @@ export default function AdvancedCopyPage() {
   const [sourceTree, setSourceTree] = useState([]);
   
   // شملنا الفيديوهات والملفات في هيكل التحديد
-  const [selected, setSelected] = useState({ subjects: [], chapters: [], exams: [], videos: [], pdfs: [] });
+  const [selected, setSelected] = useState({ subjects: [], chapters: [], exams: [], videos: [], pdfs: [], flashcard_decks: [] });
 
   const [notifyStudents, setNotifyStudents] = useState(false);
 
@@ -69,7 +70,7 @@ export default function AdvancedCopyPage() {
   useEffect(() => {
     if (!sourceCourseId) {
         setSourceTree([]);
-        setSelected({ subjects: [], chapters: [], exams: [], videos: [], pdfs: [] });
+        setSelected({ subjects: [], chapters: [], exams: [], videos: [], pdfs: [], flashcard_decks: [] });
         return;
     }
     const fetchTree = async () => {
@@ -109,10 +110,11 @@ export default function AdvancedCopyPage() {
   }, [targetCourseId]);
 
   const selectAll = (subjects) => {
-    const newSelected = { subjects: [], chapters: [], exams: [], videos: [], pdfs: [] };
+    const newSelected = { subjects: [], chapters: [], exams: [], videos: [], pdfs: [], flashcard_decks: [] };
     subjects.forEach(sub => {
       newSelected.subjects.push(sub.id);
       sub.exams?.forEach(ex => newSelected.exams.push(ex.id));
+      sub.flashcard_decks?.forEach(d => newSelected.flashcard_decks.push(d.id));
       sub.chapters?.forEach(ch => {
           newSelected.chapters.push(ch.id);
           ch.videos?.forEach(v => newSelected.videos.push(v.id));
@@ -131,6 +133,7 @@ export default function AdvancedCopyPage() {
         let newExams = [...prev.exams];
         let newVideos = [...prev.videos];
         let newPdfs = [...prev.pdfs];
+        let newDecks = [...(prev.flashcard_decks || [])];
 
         if (isSelected) {
             newSubjects = newSubjects.filter(id => id !== sub.id);
@@ -139,6 +142,8 @@ export default function AdvancedCopyPage() {
             
             newChapters = newChapters.filter(id => !subChapterIds.includes(id));
             newExams = newExams.filter(id => !subExamIds.includes(id));
+            const subDeckIds = sub.flashcard_decks?.map(d => d.id) || [];
+            newDecks = newDecks.filter(id => !subDeckIds.includes(id));
             
             sub.chapters?.forEach(ch => {
                 const vIds = ch.videos?.map(v => v.id) || [];
@@ -154,8 +159,9 @@ export default function AdvancedCopyPage() {
                 c.pdfs?.forEach(p => { if(!newPdfs.includes(p.id)) newPdfs.push(p.id); });
             });
             sub.exams?.forEach(e => { if(!newExams.includes(e.id)) newExams.push(e.id); });
+            sub.flashcard_decks?.forEach(d => { if(!newDecks.includes(d.id)) newDecks.push(d.id); });
         }
-        return { subjects: newSubjects, chapters: newChapters, exams: newExams, videos: newVideos, pdfs: newPdfs };
+        return { subjects: newSubjects, chapters: newChapters, exams: newExams, videos: newVideos, pdfs: newPdfs, flashcard_decks: newDecks };
     });
   };
 
@@ -195,6 +201,17 @@ export default function AdvancedCopyPage() {
     });
   };
 
+  // 🗂️ تحديد/إلغاء مجموعة فلاش كاردس (مثل الامتحان: تحديدها يضيف مادتها لضمان النسخ في المسار الكامل)
+  const toggleDeck = (deckId, subjectId) => {
+    setSelected(prev => {
+        const decks = prev.flashcard_decks || [];
+        const isSelected = decks.includes(deckId);
+        const newDecks = isSelected ? decks.filter(id => id !== deckId) : [...decks, deckId];
+        const newSubjects = (!isSelected && !prev.subjects.includes(subjectId)) ? [...prev.subjects, subjectId] : prev.subjects;
+        return { ...prev, flashcard_decks: newDecks, subjects: newSubjects };
+    });
+  };
+
   const toggleVideo = (videoId) => {
     setSelected(prev => ({
         ...prev,
@@ -213,7 +230,7 @@ export default function AdvancedCopyPage() {
   const executeCopy = async () => {
     if (!sourceCourseId || !targetCourseId) return showToast('يرجى اختيار الكورس المصدري والهدف', 'error');
     
-    const hasIndividualChaptersOrExams = selected.chapters.length > 0 || selected.exams.length > 0;
+    const hasIndividualChaptersOrExams = selected.chapters.length > 0 || selected.exams.length > 0 || selected.flashcard_decks.length > 0;
     if (hasIndividualChaptersOrExams && !targetSubjectId && selected.subjects.length === 0) {
         return showToast('يجب اختيار المادة الوجهة لنسخ الفصول والامتحانات الفردية', 'error');
     }
@@ -235,11 +252,12 @@ export default function AdvancedCopyPage() {
         subjects: [...selected.subjects],
         chapters: [...selected.chapters],
         exams: [...selected.exams],
+        flashcard_decks: [...selected.flashcard_decks],
         videos: filteredVideos, 
         pdfs: filteredPdfs 
     };
 
-    if (finalPayload.subjects.length === 0 && finalPayload.chapters.length === 0 && finalPayload.exams.length === 0 && finalPayload.videos.length === 0 && finalPayload.pdfs.length === 0) {
+    if (finalPayload.subjects.length === 0 && finalPayload.chapters.length === 0 && finalPayload.exams.length === 0 && finalPayload.flashcard_decks.length === 0 && finalPayload.videos.length === 0 && finalPayload.pdfs.length === 0) {
         return showToast('يرجى تحديد عنصر واحد على الأقل للنسخ', 'error');
     }
 
@@ -261,7 +279,7 @@ export default function AdvancedCopyPage() {
       
       if (res.ok) {
         showToast('تم النسخ بنجاح!', 'success');
-        setSelected({ subjects: [], chapters: [], exams: [], videos: [], pdfs: [] });
+        setSelected({ subjects: [], chapters: [], exams: [], videos: [], pdfs: [], flashcard_decks: [] });
       } else {
         showToast(data.error || 'حدث خطأ أثناء النسخ', 'error');
       }
@@ -383,6 +401,7 @@ export default function AdvancedCopyPage() {
                                 <div className="tag"><span><span className="icon-wrap mini">{Icons.subject}</span> مواد</span><strong>{selected.subjects.length}</strong></div>
                                 <div className="tag"><span><span className="icon-wrap mini">{Icons.folder}</span> فصول</span><strong>{selected.chapters.length}</strong></div>
                                 <div className="tag"><span><span className="icon-wrap mini">{Icons.exam}</span> امتحانات</span><strong>{selected.exams.length}</strong></div>
+                                <div className="tag"><span><span className="icon-wrap mini">{Icons.deck}</span> فلاش كاردس</span><strong>{selected.flashcard_decks.length}</strong></div>
                                 <div className="tag"><span><span className="icon-wrap mini">{Icons.video}</span> محتوى فردي</span><strong>{selected.videos.length + selected.pdfs.length}</strong></div>
                             </div>
 
@@ -503,6 +522,20 @@ export default function AdvancedCopyPage() {
                                                     <div className="item-text">
                                                         <span className="icon" style={{color: 'var(--gold)'}}>{Icons.exam}</span>
                                                         <h5>امتحان: {ex.title}</h5>
+                                                    </div>
+                                                </label>
+                                            </div>
+                                        ))}
+
+                                        {/* 🗂️ مجموعات الفلاش كاردس */}
+                                        {sub.flashcard_decks?.map(d => (
+                                            <div key={`d-${d.id}`} className={`deck-item ${selected.flashcard_decks.includes(d.id) ? 'selected' : ''}`}>
+                                                <label className="custom-checkbox">
+                                                    <input type="checkbox" checked={selected.flashcard_decks.includes(d.id)} onChange={() => toggleDeck(d.id, sub.id)} />
+                                                    <span className="checkmark deck">{selected.flashcard_decks.includes(d.id) && Icons.check}</span>
+                                                    <div className="item-text">
+                                                        <span className="icon" style={{color: '#8B5CF6'}}>{Icons.deck}</span>
+                                                        <h5>فلاش كاردس: {d.title}{d.flashcards?.[0]?.count !== undefined ? ` (${d.flashcards[0].count} بطاقة)` : ''}</h5>
                                                     </div>
                                                 </label>
                                             </div>
@@ -692,6 +725,11 @@ export default function AdvancedCopyPage() {
         .exam-item::before { content: ''; position: absolute; top: 20px; right: -17px; width: 17px; height: 2px; background: var(--border); z-index: -1; }
         .exam-item.selected { border-style: solid; border-color: #facc15; background: rgba(250, 204, 21, 0.08); }
 
+        /* --- Flashcard Deck Level --- */
+        .deck-item { background: var(--bg-base); border: 1px dashed var(--border); border-radius: 10px; padding: 14px 16px; position: relative; z-index: 2; transition: 0.2s; }
+        .deck-item::before { content: ''; position: absolute; top: 20px; right: -17px; width: 17px; height: 2px; background: var(--border); z-index: -1; }
+        .deck-item.selected { border-style: solid; border-color: #8B5CF6; background: rgba(139, 92, 246, 0.08); }
+
         /* ================= Custom Checkboxes ================= */
         .custom-checkbox { display: flex; align-items: center; cursor: pointer; position: relative; user-select: none; width: 100%; }
         .custom-checkbox input { position: absolute; opacity: 0; cursor: pointer; height: 0; width: 0; }
@@ -700,12 +738,14 @@ export default function AdvancedCopyPage() {
         .checkmark.main { height: 26px; width: 26px; border-radius: 8px; }
         .checkmark.sub { height: 22px; width: 22px; }
         .checkmark.exam { height: 22px; width: 22px; }
+        .checkmark.deck { height: 22px; width: 22px; }
 
         .custom-checkbox:hover input ~ .checkmark { border-color: var(--text-primary); }
         
         .custom-checkbox input:checked ~ .checkmark.main { background-color: var(--gold); border-color: var(--gold); color: #111009; }
         .custom-checkbox input:checked ~ .checkmark.sub { background-color: var(--gold); border-color: var(--gold); color: #111009; }
         .custom-checkbox input:checked ~ .checkmark.exam { background-color: #facc15; border-color: #facc15; color: #111009; }
+        .custom-checkbox input:checked ~ .checkmark.deck { background-color: #8B5CF6; border-color: #8B5CF6; color: #fff; }
 
         .item-text { display: flex; align-items: center; gap: 10px; }
         .item-text h4 { margin: 0; font-size: 1.15rem; color: var(--text-primary); font-weight: bold; }

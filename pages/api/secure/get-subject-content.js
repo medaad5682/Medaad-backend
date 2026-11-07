@@ -82,7 +82,8 @@ export default async (req, res) => {
           videos (id, title, sort_order, youtube_video_id, duration, encoding_status, bunny_video_id), 
           pdfs (id, title, sort_order)
         ),
-        exams (id, title, duration_minutes, sort_order, start_time, end_time, is_active, allow_retake) 
+        exams (id, title, duration_minutes, sort_order, start_time, end_time, is_active, allow_retake),
+        flashcard_decks (id, title, description, sort_order, is_active, updated_at, flashcards ( count ))
       `)
       .eq('id', subjectId)
       .single();
@@ -217,7 +218,21 @@ export default async (req, res) => {
             isExpired: isExpired, 
             attempt_id: attemptId        
           };
-        })
+        }),
+
+      // 🗂️ مجموعات الفلاش كاردس: المعطّلة مخفية عن الطلاب، والمعلم المالك يراها مع is_active
+      flashcard_decks: (subjectData.flashcard_decks || [])
+        .filter(d => isOwner || d.is_active !== false)
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+        .map(d => ({
+          id: d.id,
+          title: d.title,
+          description: d.description,
+          sort_order: d.sort_order,
+          card_count: d.flashcards?.[0]?.count ?? 0,
+          updated_at: d.updated_at,
+          ...(isOwner ? { is_active: d.is_active } : {}),
+        })),
     };
 
     return res.status(200).json(formattedData);

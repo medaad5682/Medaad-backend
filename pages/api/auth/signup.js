@@ -2,6 +2,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import bcrypt from 'bcryptjs';
 import { consumeVerifyToken } from '../../../lib/otpHelper';
 import { verifyClientAttestation, ATTESTATION_FAILED_MESSAGE } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
+import { applyAutoEnrollToUser } from '../../../lib/autoEnrollHelper'; // 🎁 التفعيل التلقائي للحسابات الجديدة
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -130,11 +131,17 @@ export default async (req, res) => {
       insertPayload.email_verified = emailVerified;
     }
 
-    const { error: insertError } = await supabase
+    const { data: createdUser, error: insertError } = await supabase
       .from('users')
-      .insert(insertPayload);
+      .insert(insertPayload)
+      .select('id')
+      .single();
 
     if (insertError) throw insertError;
+
+    // 🎁 منح الكورسات/المواد التي اختارها السوبر أدمن للحسابات الجديدة
+    // (لا يرمي أخطاء أبداً — فشله لا يؤثر على نجاح إنشاء الحساب)
+    await applyAutoEnrollToUser(createdUser?.id);
 
     return res.status(200).json({ success: true, message: 'تم إنشاء الحساب بنجاح!' });
 

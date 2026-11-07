@@ -3,11 +3,13 @@ import path from 'path';
 import { supabase } from '../../../lib/supabaseClient';
 import { parse } from 'cookie';
 import { checkUserAccess } from '../../../lib/authHelper';
+import { checkFlashcardImageAccess } from '../../../lib/flashcardAccess'; // 🗂️ حماية صور الفلاش كاردس
 
 export default async (req, res) => {
   const { type, filename } = req.query;
 
   let isAuthorized = false;
+  let viaDashboard = false; // 🗂️ true إذا كان الطلب من لوحة التحكم (كوكي أدمن/معلم)
 
   // قراءة الكوكيز
   const cookies = parse(req.headers.cookie || '');
@@ -31,6 +33,7 @@ export default async (req, res) => {
 
           if (isSuperAdmin || isTeacher) {
               isAuthorized = true;
+              viaDashboard = true;
           }
       }
   }
@@ -53,6 +56,15 @@ export default async (req, res) => {
   const validTypes = ['receipts', 'pdfs', 'exam_images'];
   if (!validTypes.includes(type) || !filename) {
     return res.status(400).send('Invalid request');
+  }
+
+  // 🗂️ طلاب التطبيق (غير الداشبورد): صور الفلاش كاردس لا تُخدم إلا لمن يملك المادة،
+  // حتى لا يُتجاوز فحص get-image عبر هذا المسار بتخمين اسم الملف
+  if (type === 'exam_images' && !viaDashboard) {
+    const fc = await checkFlashcardImageAccess(req, filename);
+    if (fc.referenced && !fc.allowed) {
+      return res.status(403).send('Forbidden: Access Denied');
+    }
   }
 
   const filePath = path.join(process.cwd(), 'storage', type, filename);

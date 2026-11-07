@@ -104,6 +104,13 @@ export default async (req, res) => {
         return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    // 🖼️ حد أقصى لحجم الصور (الحد العام 500MB مخصص للـ PDF) — يحمي القرص وبيانات الطلاب
+    const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+    if (['.png', '.jpg', '.jpeg'].includes(path.extname(req.file.originalname).toLowerCase()) && req.file.size > MAX_IMAGE_BYTES) {
+        try { fs.unlinkSync(req.file.path); } catch (e) {}
+        return res.status(413).json({ error: 'حجم الصورة أكبر من 10 ميجا. صغّر الصورة ثم أعد المحاولة.' });
+    }
+
     console.log(`[Upload Step 6] File Saved Successfully on Disk!`);
     console.log(`   -> Original Name: ${req.file.originalname}`);
     console.log(`   -> Saved Name:    ${req.file.filename}`);
@@ -112,13 +119,16 @@ export default async (req, res) => {
     // ============================================================
     // 🛡️ [صلاحيات المعلم] التحقق بناءً على نوع الملف المرفوع
     // ملفات PDF ⇐ صلاحية "رفع PDF" — صور أسئلة الامتحان ⇐ صلاحية "إنشاء امتحانات"
+    // صور كروت الفلاش كاردس (type=flashcard_image) ⇐ صلاحية "إدارة الفلاش كاردس"
     // (السوبر أدمن يتخطى هذا التحقق دائماً)
     // ============================================================
     if (user.role !== 'super_admin') {
         const uploadedExt = path.extname(req.file.originalname).toLowerCase();
         let requiredPermission = null;
         if (uploadedExt === '.pdf') requiredPermission = 'can_upload_pdf';
-        else if (['.png', '.jpg', '.jpeg'].includes(uploadedExt)) requiredPermission = 'can_create_exam';
+        else if (['.png', '.jpg', '.jpeg'].includes(uploadedExt)) {
+            requiredPermission = req.body.type === 'flashcard_image' ? 'can_manage_flashcards' : 'can_create_exam';
+        }
 
         if (requiredPermission) {
             const perm = await checkTeacherPermission(user.teacherId, requiredPermission);

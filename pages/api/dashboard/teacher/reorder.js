@@ -3,11 +3,11 @@ import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 
 // ============================================================
 // 🔀 API لإعادة ترتيب العناصر بعد السحب والإفلات (Drag & Drop)
-// يُعالج: courses, subjects, chapters, exams, videos, pdfs
+// يُعالج: courses, subjects, chapters, exams, videos, pdfs, flashcard_decks
 // ============================================================
 
 // الجداول المسموح بتحديث ترتيبها
-const ALLOWED_TYPES = ['courses', 'subjects', 'chapters', 'exams', 'videos', 'pdfs'];
+const ALLOWED_TYPES = ['courses', 'subjects', 'chapters', 'exams', 'videos', 'pdfs', 'flashcard_decks'];
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -121,6 +121,17 @@ async function verifyOwnership(type, items, teacherId) {
         .eq('id', firstId)
         .single();
       return String(data?.subjects?.courses?.teacher_id) === String(teacherId);
+    }
+
+    if (type === 'flashcard_decks') {
+      // التحقق من كل المجموعات المُرسلة (وليس الأولى فقط) عبر المادة ثم الكورس
+      const ids = [...new Set(items.map(i => i.id))];
+      const { data } = await supabase
+        .from('flashcard_decks')
+        .select('id, subjects!inner(courses!inner(teacher_id))')
+        .in('id', ids);
+      if (!data || data.length !== ids.length) return false;
+      return data.every(d => String(d.subjects?.courses?.teacher_id) === String(teacherId));
     }
 
     if (type === 'videos' || type === 'pdfs') {

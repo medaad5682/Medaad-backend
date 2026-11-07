@@ -10,6 +10,7 @@ const DownloadIcon = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill
 const MoneyIcon = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>);
 const HeadphonesIcon = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>);
 const SmartphoneIcon = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>);
+const GiftIcon = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 12 20 22 4 22 4 12"></polyline><rect x="2" y="7" width="20" height="5"></rect><line x1="12" y1="22" x2="12" y2="7"></line><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"></path><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"></path></svg>);
 const SaveIcon = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>);
 
 export default function SuperSettings() {
@@ -24,6 +25,8 @@ export default function SuperSettings() {
     support_telegram: '',
     support_whatsapp: '',
     free_mode: false,
+    // 🎁 التفعيل التلقائي للحسابات الجديدة (كورسات/مواد يختارها السوبر أدمن)
+    auto_enroll_config: { enabled: false, course_ids: [], subject_ids: [] },
     player_settings: {
       players: [
         { id: 'player_1', engine: 'explode_direct', enabled: true, name: "المشغل الأساسي", description: "سريع ومستقر (ينصح به)", order: 1 },
@@ -50,6 +53,11 @@ export default function SuperSettings() {
   const [versions, setVersions] = useState([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
 
+  // 🎁 كتالوج الكورسات/المواد المتاحة للاختيار في التفعيل التلقائي
+  const [catalog, setCatalog] = useState([]);
+  const [autoSearch, setAutoSearch] = useState('');
+  const [expandedCourses, setExpandedCourses] = useState({});
+
   const [toast, setToast] = useState({ show: false, message: '', type: '' });
 
   // دالة عرض التنبيهات
@@ -62,7 +70,7 @@ export default function SuperSettings() {
   useEffect(() => {
     const initData = async () => {
       setLoading(true);
-      await Promise.all([fetchSettings(), fetchVersions()]);
+      await Promise.all([fetchSettings(), fetchVersions(), fetchCatalog()]);
       setLoading(false);
     };
     initData();
@@ -80,6 +88,11 @@ export default function SuperSettings() {
             support_telegram: data.support_telegram || '',
             support_whatsapp: data.support_whatsapp || '',
             free_mode: data.free_mode === 'true' || data.free_mode === true,
+            auto_enroll_config: {
+              enabled: data.auto_enroll_config?.enabled === true,
+              course_ids: Array.isArray(data.auto_enroll_config?.course_ids) ? data.auto_enroll_config.course_ids : [],
+              subject_ids: Array.isArray(data.auto_enroll_config?.subject_ids) ? data.auto_enroll_config.subject_ids : [],
+            },
             // ✅ السيرفر يرجع الشكل الديناميكي دائماً (مطبّعاً تلقائياً حتى
             // لو كانت البيانات القديمة محفوظة بالشكل السابق)، فنستخدمه مباشرة
             // إن وُجدت مصفوفة players صالحة، وإلا نبقي على القيمة الافتراضية.
@@ -173,6 +186,61 @@ export default function SuperSettings() {
       }
     }));
   };
+
+  // --- 🎁 دوال التفعيل التلقائي للحسابات الجديدة ---
+  const fetchCatalog = async () => {
+    try {
+      const res = await fetch('/api/dashboard/super/courses');
+      if (res.ok) {
+        const data = await res.json();
+        setCatalog(Array.isArray(data.courses) ? data.courses : []);
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('فشل جلب قائمة الكورسات', 'error');
+    }
+  };
+
+  const idIn = (list, id) => list.some(x => String(x) === String(id));
+
+  const updateAutoEnroll = (patch) => {
+    setSettings(prev => ({ ...prev, auto_enroll_config: { ...prev.auto_enroll_config, ...patch } }));
+  };
+
+  const toggleAutoCourse = (course) => {
+    const cfg = settings.auto_enroll_config;
+    if (idIn(cfg.course_ids, course.id)) {
+      updateAutoEnroll({ course_ids: cfg.course_ids.filter(x => String(x) !== String(course.id)) });
+    } else {
+      // اختيار الكورس يغطي كل مواده، فنزيل مواده المختارة منفرداً لتجنب التكرار
+      const subjectIdsOfCourse = (course.subjects || []).map(sub => String(sub.id));
+      updateAutoEnroll({
+        course_ids: [...cfg.course_ids, course.id],
+        subject_ids: cfg.subject_ids.filter(x => !subjectIdsOfCourse.includes(String(x))),
+      });
+    }
+  };
+
+  const toggleAutoSubject = (subjectId) => {
+    const cfg = settings.auto_enroll_config;
+    if (idIn(cfg.subject_ids, subjectId)) {
+      updateAutoEnroll({ subject_ids: cfg.subject_ids.filter(x => String(x) !== String(subjectId)) });
+    } else {
+      updateAutoEnroll({ subject_ids: [...cfg.subject_ids, subjectId] });
+    }
+  };
+
+  const durationLabel = (days) => (days === null || days === undefined) ? 'مدى الحياة' : `${days} يوم`;
+
+  const normalizedAutoSearch = autoSearch.trim().toLowerCase();
+  const filteredCatalog = catalog.filter(c => {
+    if (!normalizedAutoSearch) return true;
+    return (
+      (c.title || '').toLowerCase().includes(normalizedAutoSearch) ||
+      (c.teacher_name || '').toLowerCase().includes(normalizedAutoSearch) ||
+      (c.subjects || []).some(sub => (sub.title || '').toLowerCase().includes(normalizedAutoSearch))
+    );
+  });
 
   // --- دوال إصدارات التطبيق ---
   const fetchVersions = async () => {
@@ -301,6 +369,120 @@ export default function SuperSettings() {
                     عند تفعيل هذا الوضع: تختفي الأسعار من التطبيق، ويتحول زر "شراء" إلى "تفعيل مجاني". 
                     <br/><span style={{color: 'var(--text-secondary)'}}>تأكد من تفعيل هذا الوضع فقط عند الحاجة.</span>
                   </p>
+                </div>
+              </div>
+
+              {/* 🎁 التفعيل التلقائي للحسابات الجديدة */}
+              <div className="card">
+                <div className="card-header">
+                  <h3><GiftIcon /> التفعيل التلقائي للحسابات الجديدة</h3>
+                </div>
+                <div className="card-body">
+                  <label className="checkbox-label large">
+                    <input
+                      type="checkbox"
+                      checked={settings.auto_enroll_config.enabled}
+                      onChange={(e) => updateAutoEnroll({ enabled: e.target.checked })}
+                    />
+                    <span>تفعيل الكورسات/المواد المختارة تلقائياً لكل حساب جديد</span>
+                  </label>
+                  <p className="hint mt-2 mb-4">
+                    يُطبَّق على الحسابات التي تُنشأ بعد الحفظ فقط، ولا يؤثر على الحسابات الحالية.
+                    تُحسب مدة الصلاحية لكل كورس/مادة من إعداد "المدة" الخاص به (وإن لم تُحدَّد مدة يكون الوصول مدى الحياة).
+                  </p>
+
+                  <div className={`auto-enroll-body ${settings.auto_enroll_config.enabled ? '' : 'dimmed'}`}>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="ابحث باسم الكورس أو المادة أو المدرس..."
+                      value={autoSearch}
+                      onChange={(e) => setAutoSearch(e.target.value)}
+                    />
+
+                    <div className="auto-summary">
+                      المختار: <b>{settings.auto_enroll_config.course_ids.length}</b> كورس
+                      {' '}و <b>{settings.auto_enroll_config.subject_ids.length}</b> مادة
+                      {settings.auto_enroll_config.enabled &&
+                        settings.auto_enroll_config.course_ids.length === 0 &&
+                        settings.auto_enroll_config.subject_ids.length === 0 && (
+                        <span className="auto-warn"> — التفعيل شغّال لكن لم تختر أي شيء بعد</span>
+                      )}
+                      {(settings.auto_enroll_config.course_ids.length + settings.auto_enroll_config.subject_ids.length) > 0 && (
+                        <button
+                          type="button"
+                          className="link-btn"
+                          onClick={() => updateAutoEnroll({ course_ids: [], subject_ids: [] })}
+                        >
+                          مسح الاختيار
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="auto-list">
+                      {catalog.length === 0 && <div className="auto-empty">لا توجد كورسات بعد.</div>}
+                      {catalog.length > 0 && filteredCatalog.length === 0 && <div className="auto-empty">لا توجد نتائج مطابقة.</div>}
+
+                      {filteredCatalog.map(course => {
+                        const courseChecked = idIn(settings.auto_enroll_config.course_ids, course.id);
+                        const subjects = course.subjects || [];
+                        const expanded = !!expandedCourses[course.id] || (normalizedAutoSearch && subjects.length > 0);
+                        const pickedSubjects = subjects.filter(sub => idIn(settings.auto_enroll_config.subject_ids, sub.id)).length;
+                        return (
+                          <div key={course.id} className="auto-course">
+                            <div className="auto-course-row">
+                              <label className="auto-check">
+                                <input
+                                  type="checkbox"
+                                  checked={courseChecked}
+                                  onChange={() => toggleAutoCourse(course)}
+                                />
+                                <span className="auto-title">{course.title}</span>
+                              </label>
+                              <span className="auto-meta">{course.teacher_name}</span>
+                              <span className="auto-badge">{durationLabel(course.access_duration_days)}</span>
+                              {subjects.length > 0 && (
+                                <button
+                                  type="button"
+                                  className="link-btn"
+                                  onClick={() => setExpandedCourses(prev => ({ ...prev, [course.id]: !prev[course.id] }))}
+                                >
+                                  {expanded ? 'إخفاء المواد' : `المواد (${subjects.length})`}
+                                  {!courseChecked && pickedSubjects > 0 ? ` • ${pickedSubjects} مختارة` : ''}
+                                </button>
+                              )}
+                            </div>
+
+                            {expanded && subjects.length > 0 && (
+                              <div className="auto-subjects">
+                                {subjects.map(sub => {
+                                  const subChecked = courseChecked || idIn(settings.auto_enroll_config.subject_ids, sub.id);
+                                  const effectiveDays = (sub.access_duration_days !== null && sub.access_duration_days !== undefined)
+                                    ? sub.access_duration_days
+                                    : course.access_duration_days;
+                                  return (
+                                    <div key={sub.id} className="auto-subject-row">
+                                      <label className="auto-check">
+                                        <input
+                                          type="checkbox"
+                                          checked={subChecked}
+                                          disabled={courseChecked}
+                                          onChange={() => toggleAutoSubject(sub.id)}
+                                        />
+                                        <span className="auto-title">{sub.title}</span>
+                                      </label>
+                                      {courseChecked && <span className="auto-meta">مشمولة بالكورس</span>}
+                                      <span className="auto-badge">{durationLabel(effectiveDays)}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -821,6 +1003,26 @@ export default function SuperSettings() {
           font-weight: 700; 
           border: 1px solid #ef4444;
         }
+
+        /* ── AUTO ENROLL ── */
+        .auto-enroll-body.dimmed { opacity: 0.55; }
+        .auto-summary { margin: 12px 0; color: var(--text-secondary); font-size: 0.9rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+        .auto-summary b { color: var(--gold); }
+        .auto-warn { color: #fbbf24; }
+        .auto-list { max-height: 420px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-base); }
+        .auto-empty { padding: 24px; text-align: center; color: var(--text-muted); }
+        .auto-course { border-bottom: 1px solid var(--border); }
+        .auto-course:last-child { border-bottom: none; }
+        .auto-course-row, .auto-subject-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; flex-wrap: wrap; }
+        .auto-subjects { background: var(--bg-elevated); padding: 4px 0 4px 0; }
+        .auto-subject-row { padding-right: 40px; }
+        .auto-check { display: flex; align-items: center; gap: 10px; cursor: pointer; flex: 1; min-width: 180px; color: var(--text-primary); font-weight: 600; }
+        .auto-check input { width: 18px; height: 18px; cursor: pointer; accent-color: var(--gold); }
+        .auto-check input:disabled { cursor: not-allowed; }
+        .auto-meta { color: var(--text-muted); font-size: 0.8rem; }
+        .auto-badge { background: var(--gold-dim); color: var(--gold); border: 1px solid var(--border-accent); padding: 2px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
+        .link-btn { background: none; border: none; color: var(--gold); cursor: pointer; font-size: 0.82rem; font-weight: 700; padding: 0; font-family: inherit; }
+        .link-btn:hover { text-decoration: underline; }
 
         /* ── LOADING & TOAST ── */
         .loading-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 60px 0; color: var(--gold); font-weight: bold; }

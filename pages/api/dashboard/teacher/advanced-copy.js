@@ -56,6 +56,106 @@ async function sendImmediateVideoNotification(newVideoId, chapterId, videoTitle)
   }
 }
 
+// ===================================================================
+// 🗂️ نسخ مجموعة فلاش كاردس (Step 11)
+// - تُنسخ المجموعة وبطاقاتها بنفس الترتيب.
+// - ⚠️ البطاقات المنسوخة تعيد استخدام نفس أسماء ملفات الصور (لا نكرر الملفات على القرص).
+//   فحص صور get-image يسمح بالصورة لأي طالب يملك أي مجموعة تحتويها (Step 6).
+// - لا يُحذف أي ملف صورة هنا إطلاقاً.
+// - لا نُرسل إشعاراً للطلاب عند النسخ.
+// - لو فشل نسخ البطاقات نحذف المجموعة الجديدة (rollback) حتى لا تبقى مجموعة فارغة.
+// ===================================================================
+const CARD_INSERT_CHUNK = 200;
+
+async function copyFlashcardDeck(oldDeck, targetSubjectId, teacherId, sortOrder) {
+  const { data: oldCards, error: cardsErr } = await supabase
+    .from('flashcards')
+    .select('front_text, back_text, front_image_file_id, back_image_file_id, sort_order')
+    .eq('deck_id', oldDeck.id)
+    .order('sort_order', { ascending: true })
+    .order('id', { ascending: true });
+  if (cardsErr) throw new Error(`فشل قراءة بطاقات المجموعة: ${cardsErr.message}`);
+
+  const { data: newDeck, error: deckErr } = await supabase
+    .from('flashcard_decks')
+    .insert({
+      subject_id: targetSubjectId,
+      teacher_id: teacherId,
+      title: oldDeck.title, // الاسم الأصلي
+      description: oldDeck.description,
+      sort_order: sortOrder,
+      is_active: oldDeck.is_active,
+    })
+    .select('id')
+    .single();
+  if (deckErr || !newDeck) throw new Error(`فشل إنشاء المجموعة المنسوخة: ${deckErr?.message || ''}`);
+
+  try {
+    const rows = (oldCards || []).map((c, i) => ({
+      deck_id: newDeck.id,
+      front_text: c.front_text,
+      back_text: c.back_text,
+      front_image_file_id: c.front_image_file_id, // نفس اسم الملف (مشاركة)
+      back_image_file_id: c.back_image_file_id,
+      sort_order: i,
+    }));
+    for (let i = 0; i < rows.length; i += CARD_INSERT_CHUNK) {
+      const { error: insErr } = await supabase.from('flashcards').insert(rows.slice(i, i + CARD_INSERT_CHUNK));
+      if (insErr) throw new Error(insErr.message);
+    }
+  } catch (err) {
+    await supabase.from('flashcard_decks').delete().eq('id', newDeck.id); // cascade يحذف ما أُدخل من بطاقات
+    throw new Error(`فشل نسخ بطاقات المجموعة: ${err.message}`);
+  }
+  return newDeck.id;
+}
+
+// ===================================================================
+// 🛡️ التأكد أن كل المعرّفات المحددة (مواد/فصول/امتحانات/فيديوهات/ملفات) تتبع الكورس المصدر فعلاً.
+// المعرّفات تأتي من العميل، وفحص الملكية السابق يغطي الكورس فقط؛ بدون هذا الفحص يستطيع معلم إرسال
+// معرّف امتحان/فيديو/ملف لمعلم آخر ونسخه كاملاً (بأسئلته وإجاباته) إلى كورسه.
+// يرجع true إذا كانت كل المعرّفات سليمة.
+// ===================================================================
+async function selectionBelongsToCourse(selected, sourceCourseId) {
+  const keys = ['subjects', 'chapters', 'exams', 'videos', 'pdfs'];
+  for (const k of keys) {
+    if (selected[k] !== undefined && !Array.isArray(selected[k])) return false;
+  }
+  const { data: subs, error } = await supabase
+    .from('subjects')
+    .select('id, chapters ( id, videos ( id ), pdfs ( id ) ), exams ( id )')
+    .eq('course_id', sourceCourseId);
+  if (error) throw new Error(`فشل التحقق من المحتوى المحدد: ${error.message}`);
+
+  const allowed = { subjects: new Set(), chapters: new Set(), exams: new Set(), videos: new Set(), pdfs: new Set() };
+  for (const sub of (subs || [])) {
+    allowed.subjects.add(String(sub.id));
+    (sub.exams || []).forEach(e => allowed.exams.add(String(e.id)));
+    (sub.chapters || []).forEach(ch => {
+      allowed.chapters.add(String(ch.id));
+      (ch.videos || []).forEach(v => allowed.videos.add(String(v.id)));
+      (ch.pdfs || []).forEach(p => allowed.pdfs.add(String(p.id)));
+    });
+  }
+  return keys.every(k => (selected[k] || []).every(id => allowed[k].has(String(id))));
+}
+
+// المجموعات المحددة (بالمعرّف) بشرط أن تتبع الكورس المصدر فعلاً — لا نثق بالمعرفات القادمة من العميل
+async function fetchSourceDecks(deckIds, sourceCourseId, subjectId = null) {
+  if (!Array.isArray(deckIds) || deckIds.length === 0) return [];
+  let q = supabase
+    .from('flashcard_decks')
+    .select('*, subjects!inner(course_id)')
+    .in('id', deckIds)
+    .eq('subjects.course_id', sourceCourseId)
+    .order('sort_order', { ascending: true })
+    .order('id', { ascending: true });
+  if (subjectId !== null) q = q.eq('subject_id', subjectId);
+  const { data, error } = await q;
+  if (error) throw new Error(`فشل قراءة المجموعات: ${error.message}`);
+  return data || [];
+}
+
 export default async function handler(req, res) {
   // 1. التحقق من صلاحية المعلم
   const { user, error } = await requireTeacherOrAdmin(req, res);
@@ -78,7 +178,8 @@ export default async function handler(req, res) {
         .select(`
           id, title,
           chapters ( id, title, videos (id, title), pdfs (id, title) ),
-          exams ( id, title )
+          exams ( id, title ),
+          flashcard_decks ( id, title, sort_order, flashcards ( count ) )
         `)
         .eq('course_id', courseId)
         .order('sort_order', { ascending: true });
@@ -110,6 +211,7 @@ export default async function handler(req, res) {
       const hasPdfs = (selected.pdfs && selected.pdfs.length > 0) ||
         (selected.chapters && selected.chapters.length > 0);
       const hasExams = selected.exams && selected.exams.length > 0;
+      const hasDecks = selected.flashcard_decks && selected.flashcard_decks.length > 0;
 
       if (hasVideos) {
         const perm = await checkTeacherPermission(teacherId, 'can_upload_video');
@@ -123,6 +225,11 @@ export default async function handler(req, res) {
         const perm = await checkTeacherPermission(teacherId, 'can_create_exam');
         if (!perm.allowed) return res.status(403).json({ error: perm.error });
       }
+      // 🗂️ نسخ مجموعات الفلاش كاردس يخضع لصلاحية إدارة الفلاش كاردس
+      if (hasDecks) {
+        const perm = await checkTeacherPermission(teacherId, 'can_manage_flashcards');
+        if (!perm.allowed) return res.status(403).json({ error: perm.error });
+      }
     }
 
     try {
@@ -134,10 +241,33 @@ export default async function handler(req, res) {
           return res.status(403).json({ error: 'أنت لا تملك صلاحية على هذه الكورسات' });
       }
 
+      // 🛡️ كل ما حدده المعلم يجب أن يتبع الكورس المصدر (يمنع نسخ محتوى معلم آخر بتزوير المعرّفات)
+      if (!(await selectionBelongsToCourse(selected, sourceCourseId))) {
+          return res.status(403).json({ error: 'بعض العناصر المحددة لا تتبع الكورس المصدر' });
+      }
+
+      // 🛡️ المادة الوجهة يجب أن تتبع الكورس الهدف (وإلا يمكن النسخ داخل مادة معلم آخر)
+      if (targetSubjectId) {
+          const { data: tSub } = await supabase.from('subjects').select('course_id').eq('id', targetSubjectId).maybeSingle();
+          if (!tSub || String(tSub.course_id) !== String(targetCourseId)) {
+              return res.status(403).json({ error: 'المادة الوجهة لا تتبع الكورس الهدف' });
+          }
+      }
+
       // ==========================================
       // مسار أ: النسخ داخل مادة موجودة بالفعل
       // ==========================================
       if (targetSubjectId) {
+
+          // 0. 🗂️ نسخ مجموعات الفلاش كاردس المحددة (تُضاف في نهاية مجموعات المادة الوجهة)
+          if (selected.flashcard_decks && selected.flashcard_decks.length > 0) {
+              const decksToCopy = await fetchSourceDecks(selected.flashcard_decks, sourceCourseId);
+              const { data: sortRows } = await supabase.from('flashcard_decks').select('sort_order').eq('subject_id', targetSubjectId);
+              let nextSort = (sortRows || []).reduce((m, r) => Math.max(m, r.sort_order ?? 0), -1) + 1;
+              for (const oldDeck of decksToCopy) {
+                  await copyFlashcardDeck(oldDeck, targetSubjectId, teacherId, nextSort++);
+              }
+          }
           
           // 1. نسخ الامتحانات المحددة
           if (selected.exams && selected.exams.length > 0) {
@@ -364,6 +494,12 @@ export default async function handler(req, res) {
                           await supabase.from('options').insert(newOptions);
                       }
                   }
+              }
+
+              // 🗂️ مجموعات الفلاش كاردس المحددة التابعة لهذه المادة (تحافظ على ترتيبها الأصلي)
+              const decksToCopy = await fetchSourceDecks(selected.flashcard_decks, sourceCourseId, oldSub.id);
+              for (const oldDeck of decksToCopy) {
+                  await copyFlashcardDeck(oldDeck, newSub.id, teacherId, oldDeck.sort_order ?? 0);
               }
           }
       }

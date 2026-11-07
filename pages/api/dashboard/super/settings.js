@@ -5,6 +5,11 @@ import {
   defaultPlayerSettings,
   validatePlayerSettingsPayload,
 } from '../../../../lib/playerSettingsHelper';
+import {
+  AUTO_ENROLL_KEY,
+  defaultAutoEnrollConfig,
+  normalizeAutoEnrollConfig,
+} from '../../../../lib/autoEnrollHelper';
 
 export default async function handler(req, res) {
   // 1. التحقق من الصلاحية (سوبر أدمن فقط)
@@ -22,7 +27,7 @@ export default async function handler(req, res) {
       const { data, error } = await supabase
         .from('app_settings')
         .select('key, value')
-        .in('key', TARGET_KEYS);
+        .in('key', [...TARGET_KEYS, AUTO_ENROLL_KEY]);
 
       if (error) throw error;
 
@@ -31,6 +36,8 @@ export default async function handler(req, res) {
       
       // تعيين قيم افتراضية فارغة
       TARGET_KEYS.forEach(key => settings[key] = '');
+      // 🎁 التفعيل التلقائي للحسابات الجديدة (قيمة افتراضية: معطّل)
+      settings[AUTO_ENROLL_KEY] = defaultAutoEnrollConfig();
 
       // ملء القيم الموجودة في قاعدة البيانات
       if (data) {
@@ -38,7 +45,9 @@ export default async function handler(req, res) {
           // ✅ فك تشفير JSON إذا كان المفتاح هو player_settings، ثم تطبيع
           // الشكل (تحويل الشكل القديم player_1/2/3 تلقائياً إلى مصفوفة
           // players الديناميكية الجديدة إن لزم الأمر)
-          if (item.key === 'player_settings' && item.value) {
+          if (item.key === AUTO_ENROLL_KEY) {
+            settings[AUTO_ENROLL_KEY] = normalizeAutoEnrollConfig(item.value);
+          } else if (item.key === 'player_settings' && item.value) {
             try {
               settings[item.key] = normalizePlayerSettings(JSON.parse(item.value));
             } catch (e) {
@@ -79,6 +88,40 @@ export default async function handler(req, res) {
         }
       }
 
+      // 🎁 التفعيل التلقائي: نحفظه فقط إذا أُرسل في الطلب (حتى لا تمسحه نسخة
+      // قديمة من الصفحة لا تعرفه). نُنقّي المعرفات ونحذف أي كورس/مادة غير موجودة.
+      let autoEnrollRow = null;
+      if (updates[AUTO_ENROLL_KEY] !== undefined && updates[AUTO_ENROLL_KEY] !== null) {
+        const cfg = normalizeAutoEnrollConfig(updates[AUTO_ENROLL_KEY]);
+
+        const [{ data: existingCourses, error: cErr }, { data: existingSubjects, error: sErr }] = await Promise.all([
+          cfg.course_ids.length
+            ? supabase.from('courses').select('id').in('id', cfg.course_ids)
+            : Promise.resolve({ data: [] }),
+          cfg.subject_ids.length
+            ? supabase.from('subjects').select('id, course_id').in('id', cfg.subject_ids)
+            : Promise.resolve({ data: [] }),
+        ]);
+        if (cErr) throw cErr;
+        if (sErr) throw sErr;
+
+        const validCourseIds = (existingCourses || []).map(c => c.id);
+        const validCourseSet = new Set(validCourseIds.map(String));
+        // المادة التابعة لكورس مختار تُهمل (الكورس يغطيها)
+        const validSubjectIds = (existingSubjects || [])
+          .filter(s => !validCourseSet.has(String(s.course_id)))
+          .map(s => s.id);
+
+        autoEnrollRow = {
+          key: AUTO_ENROLL_KEY,
+          value: JSON.stringify({
+            enabled: cfg.enabled,
+            course_ids: validCourseIds,
+            subject_ids: validSubjectIds,
+          }),
+        };
+      }
+
       // تجهيز البيانات للإدخال (Upsert)
       const rowsToUpsert = TARGET_KEYS.map(key => {
         // نأخذ القيمة، وإذا كانت غير موجودة نضع نصاً فارغاً
@@ -93,6 +136,8 @@ export default async function handler(req, res) {
           value: stringValue 
         };
       });
+
+      if (autoEnrollRow) rowsToUpsert.push(autoEnrollRow);
 
       const { error } = await supabase
         .from('app_settings')

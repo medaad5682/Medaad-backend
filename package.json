@@ -19,6 +19,7 @@
     "react-dom": "^18",
     "recharts": "^2.12.7",
     "formidable": "^3.5.1",
+    "fzstd": "^0.1.1",
     "jsonwebtoken": "^9.0.2",
     "lru-cache": "^10.2.0",
     "multer": "^1.4.5-lts.1",
