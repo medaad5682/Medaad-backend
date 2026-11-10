@@ -67,6 +67,8 @@ export default function StudentsPage() {
   const [showGrantModal, setShowGrantModal] = useState(false);
   const [grantTarget, setGrantTarget] = useState(null);
   const [selectedGrantItems, setSelectedGrantItems] = useState({ courses: [], subjects: [], packages: [] });
+  // 👑 حالة فتح/غلق أقسام الباقات والكورسات داخل نافذة المنح (للقائد)
+  const [grantExpanded, setGrantExpanded] = useState({});
 
   const [confirmData, setConfirmData] = useState({ show: false, message: '', onConfirm: null });
   const [toast, setToast] = useState({ show: false, message: '', type: '' });
@@ -210,6 +212,7 @@ export default function StudentsPage() {
   const openGrantModal = (target) => {
       setGrantTarget(target);
       setSelectedGrantItems({ courses: [], subjects: [], packages: [] });
+      setGrantExpanded({});
       setShowGrantModal(true);
   };
   const toggleGrantItem = (type, id) => {
@@ -285,6 +288,149 @@ export default function StudentsPage() {
     });
   };
   const renderableGrantGroups = getRenderableGrantGroups();
+
+  // =========================================================
+  // 👑 نافذة المنح المنظَّمة للقائد: كل باقة وتحتها كورساتها ومواد كل كورس،
+  // ثم قسم مستقل للكورسات التي ليست ضمن أي باقة. (لا تؤثر على غير القائد)
+  // =========================================================
+  const toggleGrantExpand = (key) => setGrantExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+
+  const renderGrantCourse = (course, scope, lockedByPackage) => {
+      const isBulk = grantTarget === 'bulk';
+      const isCourseGrantable = isBulk || grantOptions.courses.some(c => c.id === course.id);
+      const visibleSubjects = (course.subjects || []).filter(s =>
+          isBulk || grantOptions.subjects.some(gs => gs.id === s.id)
+      );
+      const courseChecked = selectedGrantItems.courses.includes(course.id);
+      const subjectsLocked = courseChecked || lockedByPackage;
+      const key = `${scope}:${course.id}`;
+      const open = !!grantExpanded[key];
+      const selectedSubjectsCount = visibleSubjects.filter(s => selectedGrantItems.subjects.includes(s.id)).length;
+
+      return (
+          <div key={key} className="gm-course">
+              <div className="gm-course-row">
+                  {lockedByPackage ? (
+                      <label className="gm-check locked">
+                          <input type="checkbox" checked disabled readOnly />
+                          <span>{course.title}</span>
+                      </label>
+                  ) : isCourseGrantable ? (
+                      <label className="gm-check">
+                          <input type="checkbox" checked={courseChecked} onChange={() => toggleGrantItem('courses', course.id)} />
+                          <span>{course.title}</span>
+                      </label>
+                  ) : (
+                      <div className="gm-check owned">
+                          <span>{course.title}</span>
+                      </div>
+                  )}
+                  {course.teacher_name && <span className="badge-owned">{course.teacher_name}</span>}
+                  {lockedByPackage && <span className="gm-tag info">ضمن الباقة المحددة</span>}
+                  {!lockedByPackage && !isCourseGrantable && <span className="gm-tag muted">مملوك مسبقاً</span>}
+                  {!lockedByPackage && courseChecked && <span className="gm-tag ok">كورس كامل</span>}
+                  {visibleSubjects.length > 0 && (
+                      <button type="button" className="gm-toggle" onClick={() => toggleGrantExpand(key)}>
+                          {open ? '▴' : '▾'} المواد ({visibleSubjects.length})
+                          {selectedSubjectsCount > 0 && <span className="gm-count">{selectedSubjectsCount}</span>}
+                      </button>
+                  )}
+              </div>
+              {open && visibleSubjects.length > 0 && (
+                  <div className="gm-subjects">
+                      {visibleSubjects.map(subject => (
+                          <label key={subject.id} className="gm-subject">
+                              <input
+                                  type="checkbox"
+                                  checked={subjectsLocked || selectedGrantItems.subjects.includes(subject.id)}
+                                  onChange={() => toggleGrantItem('subjects', subject.id)}
+                                  disabled={subjectsLocked}
+                              />
+                              <span>{subject.title}</span>
+                          </label>
+                      ))}
+                  </div>
+              )}
+          </div>
+      );
+  };
+
+  const renderLeaderGrantBody = () => {
+      const isBulk = grantTarget === 'bulk';
+      const pkgList = isBulk ? teamPackages : (grantOptions.packages || []);
+      const courseById = new Map(teamCourses.map(c => [c.id, c]));
+      const inAnyPackage = new Set(teamPackages.flatMap(p => (p.courses || []).map(c => c.id)));
+
+      // كورسات خارج أي باقة (نفس شرط الظهور القديم: متاح، أو له مواد متاحة)
+      const looseCourses = teamCourses.filter(c => {
+          if (inAnyPackage.has(c.id)) return false;
+          if (isBulk) return true;
+          return grantOptions.courses.some(g => g.id === c.id)
+              || c.subjects?.some(s => grantOptions.subjects.some(gs => gs.id === s.id));
+      });
+
+      if (pkgList.length === 0 && looseCourses.length === 0) {
+          return <p className="empty-text">لا توجد صلاحيات جديدة يمكن إضافتها.</p>;
+      }
+
+      return (
+          <>
+              {pkgList.length > 0 && (
+                  <div className="gm-section">
+                      <div className="gm-section-title">📦 الباقات <span className="gm-count">{pkgList.length}</span></div>
+                      {pkgList.map(pkg => {
+                          const pkgCourses = (pkg.courses || []).map(pc => courseById.get(pc.id) || {
+                              ...pc,
+                              teacher_name: teamTeachers.find(t => t.id === pc.teacher_id)?.name,
+                              subjects: []
+                          });
+                          const pkgPrice = pkg.price ?? pkgCourses.reduce((sum, c) => sum + (Number(c.price) || 0), 0);
+                          const pkgChecked = selectedGrantItems.packages.includes(pkg.id);
+                          const key = `pkg:${pkg.id}`;
+                          const open = !!grantExpanded[key];
+                          const pickedInside = pkgCourses.filter(c =>
+                              selectedGrantItems.courses.includes(c.id) ||
+                              (c.subjects || []).some(s => selectedGrantItems.subjects.includes(s.id))
+                          ).length;
+
+                          return (
+                              <div key={pkg.id} className={`gm-pkg ${pkgChecked ? 'selected' : ''}`}>
+                                  <div className="gm-pkg-head">
+                                      <label className="gm-check pkg">
+                                          <input type="checkbox" checked={pkgChecked} onChange={() => toggleGrantItem('packages', pkg.id)} />
+                                          <span className="gm-pkg-title">{pkg.title}</span>
+                                      </label>
+                                      <span className="gm-pkg-meta">{pkgCourses.length} كورس • السعر: {pkgPrice}</span>
+                                      <button type="button" className="gm-toggle" onClick={() => toggleGrantExpand(key)}>
+                                          {open ? '▴ إخفاء المحتوى' : '▾ محتوى الباقة'}
+                                          {!pkgChecked && pickedInside > 0 && <span className="gm-count">{pickedInside}</span>}
+                                      </button>
+                                  </div>
+                                  {pkgChecked && <div className="gm-pkg-note">✅ ستُمنح الباقة بكل كورساتها</div>}
+                                  {open && (
+                                      <div className="gm-pkg-body">
+                                          {pkgCourses.length > 0
+                                              ? pkgCourses.map(c => renderGrantCourse(c, key, pkgChecked))
+                                              : <span className="package-empty">لا توجد كورسات داخل هذه الباقة.</span>}
+                                      </div>
+                                  )}
+                              </div>
+                          );
+                      })}
+                  </div>
+              )}
+
+              {looseCourses.length > 0 && (
+                  <div className="gm-section">
+                      <div className="gm-section-title">📚 كورسات خارج الباقات <span className="gm-count">{looseCourses.length}</span></div>
+                      <div className="gm-pkg-body flat">
+                          {looseCourses.map(c => renderGrantCourse(c, 'loose', false))}
+                      </div>
+                  </div>
+              )}
+          </>
+      );
+  };
 
   return (
     <TeacherLayout title="إدارة الطلاب">
@@ -553,6 +699,8 @@ export default function StudentsPage() {
               <div className="modal-box grant-modal" onClick={e => e.stopPropagation()}>
                   <div className="modal-head"><h3>➕ إضافة صلاحيات {grantTarget === 'bulk' ? 'جماعية' : ''}</h3><button className="close-icon" onClick={() => setShowGrantModal(false)}>✕</button></div>
                   <div className="modal-content scrollable custom-scrollbar">
+                      {isLeader ? renderLeaderGrantBody() : (
+                      <>
                       {renderableGrantGroups.length > 0 ? renderableGrantGroups.map(course => {
                           const isCourseGrantable = grantTarget === 'bulk' || grantOptions.courses.some(c => c.id === course.id);
                           const visibleSubjects = course.subjects?.filter(s =>
@@ -586,49 +734,18 @@ export default function StudentsPage() {
                           renderableGrantGroups.length === 0 && grantOptions.packages?.length === 0 && grantTarget !== 'bulk' &&
                           <p className="empty-text">لا توجد صلاحيات جديدة يمكن إضافتها.</p>
                       )}
-
-                      {/* 👑 باقات الفريق — تظهر فقط لقائد الفريق */}
-                      {isLeader && (grantTarget === 'bulk' ? teamPackages.length > 0 : grantOptions.packages?.length > 0) && (
-                          <div className="course-group">
-                              <div className="checkbox-row main" style={{borderBottom: 'none', marginBottom: '10px', paddingBottom: '0'}}>
-                                  <span>📦 باقات الفريق</span>
-                              </div>
-                              {(grantTarget === 'bulk' ? teamPackages : grantOptions.packages).map(pkg => {
-                                  const pkgCourses = pkg.courses || [];
-                                  const pkgPrice = pkg.price ?? pkgCourses.reduce((sum, c) => sum + (Number(c.price) || 0), 0);
-                                  return (
-                                      <label key={pkg.id} className="checkbox-row sub package-row">
-                                          <input type="checkbox" checked={selectedGrantItems.packages.includes(pkg.id)} onChange={() => toggleGrantItem('packages', pkg.id)} />
-                                          <div className="package-info">
-                                              <div className="package-head">
-                                                  <span className="package-title">📦 باقة: {pkg.title}</span>
-                                                  <span className="package-meta">{pkgCourses.length} كورس • السعر: {pkgPrice}</span>
-                                              </div>
-                                              {/* 📋 محتوى الباقة: الكورسات المتضمنة */}
-                                              <div className="package-content-label">محتوى الباقة:</div>
-                                              {pkgCourses.length > 0 ? (
-                                                  <ul className="package-content-list">
-                                                      {pkgCourses.map(c => {
-                                                          const tName = teamTeachers.find(t => t.id === c.teacher_id)?.name;
-                                                          return (
-                                                              <li key={c.id}>
-                                                                  <span>{c.title}</span>
-                                                                  {tName && <span className="badge-owned">{tName}</span>}
-                                                              </li>
-                                                          );
-                                                      })}
-                                                  </ul>
-                                              ) : (
-                                                  <span className="package-empty">لا توجد كورسات داخل هذه الباقة.</span>
-                                              )}
-                                          </div>
-                                      </label>
-                                  );
-                              })}
-                          </div>
+                      </>
                       )}
                   </div>
-                  <div className="modal-footer"><button className="cancel-btn" onClick={() => setShowGrantModal(false)}>إلغاء</button><button className="confirm-btn" onClick={submitGrant}>تأكيد ✅</button></div>
+                  <div className="modal-footer">
+                      {isLeader && (
+                          <span className="gm-summary">
+                              المحدد: {selectedGrantItems.packages.length} باقة • {selectedGrantItems.courses.length} كورس • {selectedGrantItems.subjects.length} مادة
+                          </span>
+                      )}
+                      <button className="cancel-btn" onClick={() => setShowGrantModal(false)}>إلغاء</button>
+                      <button className="confirm-btn" onClick={submitGrant}>تأكيد ✅</button>
+                  </div>
               </div>
           </div>
       )}
@@ -758,6 +875,42 @@ export default function StudentsPage() {
         .package-content-list li { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--text-secondary); }
         .package-content-list li::before { content: '•'; color: var(--gold); }
         .package-empty { font-size: 0.85rem; color: var(--text-muted); }
+
+        /* 👑 نافذة المنح المنظَّمة للقائد (باقة ← كورسات ← مواد) */
+        .gm-section { margin-bottom: 22px; }
+        .gm-section-title { display: flex; align-items: center; gap: 8px; font-weight: 800; color: var(--gold); font-size: 1rem; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        .gm-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--gold-dim); color: var(--gold); border: 1px solid var(--border-accent); font-size: 0.72rem; font-weight: 800; margin-right: 6px; }
+        .gm-section-title .gm-count { margin-right: 0; }
+
+        .gm-pkg { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; overflow: hidden; transition: 0.2s; }
+        .gm-pkg:hover { border-color: var(--border-accent); }
+        .gm-pkg.selected { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold-dim); }
+        .gm-pkg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 16px; }
+        .gm-pkg-title { font-weight: 800; color: var(--text-primary); font-size: 1.02rem; }
+        .gm-pkg-meta { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; margin-right: auto; }
+        .gm-pkg-note { padding: 0 16px 12px; font-size: 0.82rem; color: #22c55e; font-weight: 700; }
+        .gm-pkg-body { border-top: 1px dashed var(--border); background: var(--bg-surface); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+        .gm-pkg-body.flat { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); }
+
+        .gm-course { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+        .gm-pkg-body.flat .gm-course { background: var(--bg-surface); }
+        .gm-course-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        .gm-check { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text-primary); font-weight: 600; font-size: 0.95rem; }
+        .gm-check.pkg { font-weight: 800; }
+        .gm-check.owned { cursor: not-allowed; opacity: 0.6; }
+        .gm-check.locked { cursor: not-allowed; }
+        .gm-check.locked input:disabled + span { text-decoration: none; color: var(--text-secondary); }
+        .gm-tag { font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; border: 1px solid var(--border); }
+        .gm-tag.info { color: #60a5fa; background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.25); }
+        .gm-tag.ok { color: #22c55e; background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.25); }
+        .gm-tag.muted { color: var(--text-muted); background: var(--bg-surface); }
+        .gm-toggle { margin-right: auto; background: transparent; border: 1px solid var(--border); color: var(--text-secondary); padding: 4px 10px; border-radius: 8px; cursor: pointer; font-size: 0.8rem; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; transition: 0.2s; }
+        .gm-toggle:hover { border-color: var(--gold); color: var(--gold); }
+        .gm-pkg-head .gm-toggle { margin-right: 0; }
+        .gm-subjects { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+        .gm-subject { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; font-size: 0.88rem; color: var(--text-secondary); cursor: pointer; }
+        .gm-subject:hover { border-color: var(--gold); color: var(--text-primary); }
+        .gm-summary { margin-inline-end: auto; align-self: center; font-size: 0.82rem; color: var(--text-muted); font-weight: 700; }
 
         .badge-owned { font-size: 0.75rem; background: var(--bg-surface); color: var(--text-muted); padding: 2px 8px; border-radius: 12px; margin-right: 6px; border: 1px solid var(--border); font-weight: 600; }
 
