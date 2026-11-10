@@ -121,6 +121,152 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: 'الطلب غير موجود' });
       }
 
+      // --- حالة تعديل تفاصيل الطلب كاملة (Update Request Details) ---
+      // يعدّل: المبلغ المطلوب (total_price)، المبلغ المدفوع فعلياً (actual_paid_price)،
+      // وعلى مستوى كل عنصر داخل requested_data: سعر التقرير (report_price)،
+      // وتغيير الباقة (للعناصر من نوع package).
+      // ⚠️ هذا تعديل على سجل الطلب والتقارير فقط — لا يمنح ولا يسحب أي صلاحية وصول للطالب.
+      if (action === 'update_request') {
+        const { totalPrice, actualPaidPrice, itemEdits } = req.body;
+        const updates = {};
+
+        const toMoney = (v) => {
+          const n = Number(v);
+          return Number.isFinite(n) && n >= 0 ? n : null;
+        };
+        const isBlank = (v) => v === null || v === '' || v === undefined;
+
+        // 1) المبلغ المطلوب
+        if (totalPrice !== undefined) {
+          const n = isBlank(totalPrice) ? null : toMoney(totalPrice);
+          if (n === null) return res.status(400).json({ error: 'المبلغ المطلوب غير صالح' });
+          updates.total_price = n;
+        }
+
+        // 2) المبلغ المدفوع فعلياً (فارغ = إلغاء التعديل والرجوع للمبلغ المطلوب)
+        if (actualPaidPrice !== undefined) {
+          if (isBlank(actualPaidPrice)) {
+            updates.actual_paid_price = null;
+          } else {
+            const n = toMoney(actualPaidPrice);
+            if (n === null) return res.status(400).json({ error: 'المبلغ المدفوع فعلياً غير صالح' });
+            updates.actual_paid_price = n;
+          }
+        }
+
+        // 3) تعديلات العناصر (الباقة + سعر التقرير)
+        const items = Array.isArray(request.requested_data)
+          ? request.requested_data.map(i => ({ ...i }))
+          : [];
+        let courseTitle = request.course_title || '';
+        let itemsChanged = false;
+
+        if (Array.isArray(itemEdits) && itemEdits.length > 0) {
+          for (const edit of itemEdits) {
+            const idx = Number(edit?.index);
+            if (!Number.isInteger(idx) || idx < 0 || idx >= items.length) {
+              return res.status(400).json({ error: 'عنصر غير موجود داخل الطلب' });
+            }
+            const item = items[idx];
+
+            // 3.أ) تغيير الباقة
+            if (!isBlank(edit.packageId) && String(edit.packageId) !== String(item.id)) {
+              if (item.type !== 'package') {
+                return res.status(400).json({ error: 'يمكن تغيير الباقة للعناصر من نوع باقة فقط' });
+              }
+
+              const { data: newPkg, error: pkgError } = await supabase
+                .from('course_packages')
+                .select('id, team_id, title, report_price, price')
+                .eq('id', edit.packageId)
+                .maybeSingle();
+              if (pkgError) throw pkgError;
+              if (!newPkg) return res.status(404).json({ error: 'الباقة المختارة غير موجودة' });
+
+              const { data: oldPkg } = await supabase
+                .from('course_packages')
+                .select('id, team_id')
+                .eq('id', item.id)
+                .maybeSingle();
+
+              const { data: pkgItems } = await supabase
+                .from('course_package_items')
+                .select('courses(id, title)')
+                .eq('package_id', newPkg.id);
+
+              const oldTitle = item.title;
+              item.id = newPkg.id;
+              item.title = newPkg.title;
+              item.courses = (pkgItems || []).map(r => r.courses).filter(Boolean).map(c => ({ id: c.id, title: c.title }));
+              item.full_report_price = Number(newPkg.report_price) || 0;
+              // الافتراضي: سعر تقرير الباقة الجديدة (يمكن تجاوزه بقيمة report_price مرسلة)
+              item.report_price = Number(newPkg.report_price) || 0;
+
+              if (oldTitle && courseTitle.includes(oldTitle)) {
+                courseTitle = courseTitle.replace(oldTitle, newPkg.title);
+              } else if (items.length === 1) {
+                courseTitle = `باقة: ${newPkg.title}`;
+              }
+
+              // لو الباقة الجديدة تتبع فريقاً آخر → ننقل الطلب لقائد ذلك الفريق
+              // حتى يظهر في تقرير المدرس الصحيح
+              if (newPkg.team_id && (!oldPkg || String(oldPkg.team_id) !== String(newPkg.team_id))) {
+                const { data: team } = await supabase
+                  .from('teacher_teams')
+                  .select('leader_teacher_id')
+                  .eq('id', newPkg.team_id)
+                  .maybeSingle();
+                if (team?.leader_teacher_id) updates.teacher_id = team.leader_teacher_id;
+              }
+              itemsChanged = true;
+            }
+
+            // 3.ب) سعر التقرير (فارغ = حذف التخصيص والرجوع للسعر الحالي المسجّل للكورس/المادة/الباقة)
+            if (edit.report_price !== undefined) {
+              if (isBlank(edit.report_price)) {
+                if (item.report_price !== undefined) { delete item.report_price; itemsChanged = true; }
+              } else {
+                const n = toMoney(edit.report_price);
+                if (n === null) return res.status(400).json({ error: 'سعر التقرير غير صالح' });
+                item.report_price = n;
+                itemsChanged = true;
+              }
+            }
+          }
+        }
+
+        // عند طلب بعنصر واحد نُبقي سعر العنصر متسقاً مع المبلغ المطلوب
+        if (updates.total_price !== undefined && items.length === 1) {
+          items[0].price = updates.total_price;
+          itemsChanged = true;
+        }
+
+        if (itemsChanged) {
+          updates.requested_data = items;
+          updates.course_title = courseTitle;
+        }
+
+        if (Object.keys(updates).length === 0) {
+          return res.status(400).json({ error: 'لا توجد تعديلات لحفظها' });
+        }
+
+        const { error: updateError } = await supabase
+          .from('subscription_requests')
+          .update(updates)
+          .eq('id', requestId);
+        if (updateError) throw updateError;
+
+        // نعيد الصف محدّثاً بنفس شكل قائمة GET حتى تتحدث البطاقة فوراً
+        const { data: fresh } = await supabase
+          .from('subscription_requests')
+          .select('*, teachers (name)')
+          .eq('id', requestId)
+          .single();
+        const [enriched] = await attachCourseOwnerTeachers([fresh]);
+
+        return res.status(200).json({ success: true, message: 'تم حفظ تعديلات الطلب بنجاح', data: enriched });
+      }
+
       // --- حالة الرفض (Reject) ---
       if (action === 'reject') {
         // أ. تحديث حالة الطلب إلى مرفوض

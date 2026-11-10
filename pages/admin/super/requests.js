@@ -44,8 +44,11 @@ export default function SuperRequestsPage() {
   const [confirmModal, setConfirmModal] = useState({ show: false, id: null, action: null });
   const [rejectionReason, setRejectionReason] = useState('');
   
-  // ✅ حالة نافذة تعديل السعر
-  const [editPriceModal, setEditPriceModal] = useState({ show: false, id: null, price: '' });
+  // ✅ حالة نافذة تعديل الطلب (المبالغ + الباقة + سعر التقرير لكل عنصر)
+  const emptyEditModal = { show: false, id: null, totalPrice: '', actualPrice: '', items: [] };
+  const [editModal, setEditModal] = useState(emptyEditModal);
+  const [packages, setPackages] = useState([]);
+  const [packagesLoaded, setPackagesLoaded] = useState(false);
 
   // الفلترة
   const [filter, setFilter] = useState('pending'); // pending, approved, rejected
@@ -156,13 +159,80 @@ export default function SuperRequestsPage() {
     }
   };
 
-  // ✅ دالة تحديث السعر الفعلي (تحدث عمود actual_paid_price بدلاً من total_price)
-  const handleUpdatePrice = async () => {
-    const { id, price } = editPriceModal;
-    if (!price || isNaN(price) || price < 0) {
-      showToast('يرجى إدخال مبلغ صحيح', 'error');
+  // ✅ جلب الباقات (مرة واحدة عند أول فتح لنافذة التعديل) لقائمة تغيير الباقة
+  const loadPackages = async () => {
+    if (packagesLoaded) return;
+    try {
+      const res = await fetch('/api/dashboard/super/packages');
+      if (res.ok) {
+        const data = await res.json();
+        setPackages(data.packages || []);
+        setPackagesLoaded(true);
+      }
+    } catch (err) {
+      console.error('فشل جلب الباقات', err);
+    }
+  };
+
+  // ✅ فتح نافذة تعديل الطلب بكل تفاصيله
+  const openEditModal = (req) => {
+    const items = (Array.isArray(req.requested_data) ? req.requested_data : []).map((item, index) => ({
+      index,
+      type: item.type,
+      title: item.title || '',
+      id: item.id,
+      originalId: item.id,
+      report_price: item.report_price !== null && item.report_price !== undefined ? String(item.report_price) : ''
+    }));
+
+    setEditModal({
+      show: true,
+      id: req.id,
+      totalPrice: req.total_price ?? '',
+      actualPrice: req.actual_paid_price !== null && req.actual_paid_price !== undefined ? req.actual_paid_price : '',
+      items
+    });
+
+    if (items.some(i => i.type === 'package')) loadPackages();
+  };
+
+  const updateEditItem = (index, patch) => {
+    setEditModal(m => ({ ...m, items: m.items.map(i => i.index === index ? { ...i, ...patch } : i) }));
+  };
+
+  // عند اختيار باقة أخرى: نحدّث الاسم ونضع سعر تقرير الباقة الجديدة كقيمة افتراضية (قابلة للتعديل)
+  const handlePackageChange = (index, newPackageId) => {
+    const pkg = packages.find(p => String(p.id) === String(newPackageId));
+    if (!pkg) return;
+    updateEditItem(index, {
+      id: pkg.id,
+      title: pkg.title,
+      report_price: pkg.report_price !== null && pkg.report_price !== undefined ? String(pkg.report_price) : ''
+    });
+  };
+
+  // ✅ حفظ تعديلات الطلب
+  const handleSaveEdit = async () => {
+    const { id, totalPrice, actualPrice, items } = editModal;
+
+    if (totalPrice === '' || isNaN(totalPrice) || Number(totalPrice) < 0) {
+      showToast('يرجى إدخال المبلغ المطلوب بشكل صحيح', 'error');
       return;
     }
+    if (actualPrice !== '' && (isNaN(actualPrice) || Number(actualPrice) < 0)) {
+      showToast('المبلغ المدفوع فعلياً غير صالح', 'error');
+      return;
+    }
+    if (items.some(i => i.report_price !== '' && (isNaN(i.report_price) || Number(i.report_price) < 0))) {
+      showToast('سعر التقرير غير صالح', 'error');
+      return;
+    }
+
+    const itemEdits = items.map(i => ({
+      index: i.index,
+      report_price: i.report_price === '' ? null : Number(i.report_price),
+      ...(i.type === 'package' && String(i.id) !== String(i.originalId) ? { packageId: i.id } : {})
+    }));
 
     setProcessingId(id);
     try {
@@ -171,17 +241,19 @@ export default function SuperRequestsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requestId: id,
-          action: 'update_price',
-          newPrice: Number(price)
+          action: 'update_request',
+          totalPrice: Number(totalPrice),
+          actualPaidPrice: actualPrice === '' ? null : Number(actualPrice),
+          itemEdits
         })
       });
 
       const result = await res.json();
       if (res.ok) {
         showToast(result.message, 'success');
-        // ✅ تحديث السعر الفعلي في الواجهة فوراً
-        setRequests(requests.map(req => req.id === id ? { ...req, actual_paid_price: result.newPrice } : req));
-        setEditPriceModal({ show: false, id: null, price: '' });
+        // ✅ تحديث البطاقة فوراً بالبيانات المحدّثة من السيرفر
+        setRequests(prev => prev.map(r => r.id === id ? { ...r, ...result.data } : r));
+        setEditModal(emptyEditModal);
       } else {
         showToast(result.error, 'error');
       }
@@ -374,8 +446,8 @@ export default function SuperRequestsPage() {
                                 
                                 <button 
                                     className="btn-edit-price flex-center gap-1"
-                                    onClick={() => setEditPriceModal({ show: true, id: req.id, price: hasActualPrice ? req.actual_paid_price : req.total_price })}
-                                    title="تعديل المبلغ الفعلي"
+                                    onClick={() => openEditModal(req)}
+                                    title="تعديل تفاصيل الطلب (المبلغ / الباقة / سعر التقرير)"
                                 >
                                     <IconEdit /> تعديل
                                 </button>
@@ -385,6 +457,17 @@ export default function SuperRequestsPage() {
                                 <span className="label flex-center gap-1"><IconCart /> المحتوى المطلوب</span>
                                 <p className="details-text">{req.course_title || 'محتوى غير محدد'}</p>
                             </div>
+
+                            {Array.isArray(req.requested_data) && req.requested_data.some(i => i.report_price !== null && i.report_price !== undefined) && (
+                                <div className="report-chips">
+                                    <span className="label">سعر التقرير</span>
+                                    {req.requested_data.filter(i => i.report_price !== null && i.report_price !== undefined).map((i, idx) => (
+                                        <span key={idx} className="report-chip">
+                                            {i.title || (i.type === 'package' ? 'باقة' : i.type === 'course' ? 'كورس' : 'مادة')}: <b>{i.report_price} ج.م</b>
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
 
                             {req.user_note && (
                                 <div className="note-box">
@@ -517,32 +600,103 @@ export default function SuperRequestsPage() {
           </div>
       )}
 
-      {/* ✅ نافذة تعديل السعر المخصصة للـ Super Admin */}
-      {editPriceModal.show && (
+      {/* ✅ نافذة تعديل الطلب (Super Admin) */}
+      {editModal.show && (
           <div className="modal-overlay alert-mode">
-              <div className="alert-box">
+              <div className="alert-box edit-box">
                   <h3 className="flex-center justify-center gap-2">
                       <IconEdit size={22} style={{ color: 'var(--gold)' }} /> 
-                      تعديل المبلغ المدفوع
+                      تعديل الطلب #{editModal.id}
                   </h3>
-                  <p style={{marginBottom: '10px', color: 'var(--text-secondary)'}}>أدخل المبلغ الفعلي الذي تم دفعه للاحتفاظ به في السجلات:</p>
-                  <input
-                      type="number"
-                      className="reason-input"
-                      style={{ textAlign: 'center', fontSize: '1.5em', fontWeight: 'bold' }}
-                      value={editPriceModal.price}
-                      onChange={(e) => setEditPriceModal({ ...editPriceModal, price: e.target.value })}
-                      placeholder="المبلغ بالجنيه..."
-                      min="0"
-                  />
+
+                  <div className="edit-section">
+                      <div className="edit-field">
+                          <label>المبلغ المطلوب (ج.م)</label>
+                          <input
+                              type="number"
+                              min="0"
+                              className="reason-input num-input"
+                              value={editModal.totalPrice}
+                              onChange={(e) => setEditModal({ ...editModal, totalPrice: e.target.value })}
+                          />
+                      </div>
+                      <div className="edit-field">
+                          <label>المدفوع فعلياً (ج.م)</label>
+                          <input
+                              type="number"
+                              min="0"
+                              className="reason-input num-input"
+                              value={editModal.actualPrice}
+                              placeholder="نفس المطلوب"
+                              onChange={(e) => setEditModal({ ...editModal, actualPrice: e.target.value })}
+                          />
+                      </div>
+                  </div>
+                  <p className="edit-hint">اترك «المدفوع فعلياً» فارغاً ليُحتسب بنفس المبلغ المطلوب.</p>
+
+                  {editModal.items.length > 0 && (
+                      <div className="edit-items">
+                          <span className="edit-items-title">عناصر الطلب</span>
+                          {editModal.items.map(item => (
+                              <div key={item.index} className="edit-item">
+                                  <div className="edit-item-head">
+                                      <span className={`type-pill ${item.type}`}>
+                                          {item.type === 'package' ? 'باقة' : item.type === 'course' ? 'كورس' : 'مادة'}
+                                      </span>
+                                      {item.type !== 'package' && <span className="edit-item-title">{item.title}</span>}
+                                  </div>
+
+                                  {item.type === 'package' && (
+                                      <div className="edit-field">
+                                          <label>الباقة</label>
+                                          <select
+                                              className="reason-input"
+                                              value={item.id ?? ''}
+                                              onChange={(e) => handlePackageChange(item.index, e.target.value)}
+                                              disabled={!packagesLoaded}
+                                          >
+                                              {!packages.some(p => String(p.id) === String(item.id)) && (
+                                                  <option value={item.id ?? ''}>{item.title || `#${item.id}`}</option>
+                                              )}
+                                              {packages.map(p => (
+                                                  <option key={p.id} value={p.id}>
+                                                      {p.title}{p.is_active === false ? ' (مؤرشفة)' : ''} — {p.report_price ?? 0} ج.م
+                                                  </option>
+                                              ))}
+                                          </select>
+                                          {!packagesLoaded && <span className="edit-hint">جاري تحميل الباقات...</span>}
+                                      </div>
+                                  )}
+
+                                  <div className="edit-field">
+                                      <label>سعر التقرير (ج.م)</label>
+                                      <input
+                                          type="number"
+                                          min="0"
+                                          step="0.01"
+                                          className="reason-input num-input"
+                                          value={item.report_price}
+                                          placeholder="تلقائي"
+                                          onChange={(e) => updateEditItem(item.index, { report_price: e.target.value })}
+                                      />
+                                  </div>
+                              </div>
+                          ))}
+                          <p className="edit-hint">
+                              «سعر التقرير» يُستخدم في حساب مستحقات المنصة لهذا الطلب فقط. اتركه فارغاً لاستخدام السعر الحالي المسجّل للكورس/المادة/الباقة.
+                              تغيير الباقة يعدّل السجل والتقارير فقط ولا يمنح الطالب أو يسحب منه أي صلاحية وصول.
+                          </p>
+                      </div>
+                  )}
+
                   <div className="alert-actions">
-                      <button className="cancel-btn" onClick={() => setEditPriceModal({ show: false, id: null, price: '' })}>تراجع</button>
+                      <button className="cancel-btn" onClick={() => setEditModal(emptyEditModal)}>تراجع</button>
                       <button 
                         className="confirm-btn green flex-center gap-2" 
-                        onClick={handleUpdatePrice}
-                        disabled={processingId === editPriceModal.id}
+                        onClick={handleSaveEdit}
+                        disabled={processingId === editModal.id}
                       >
-                          {processingId === editPriceModal.id ? 'جاري الحفظ...' : 'حفظ التعديل'}
+                          {processingId === editModal.id ? 'جاري الحفظ...' : 'حفظ التعديلات'}
                       </button>
                   </div>
               </div>
@@ -679,6 +833,25 @@ export default function SuperRequestsPage() {
         .cancel-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
         .confirm-btn.green { background: #22c55e; color: #fff; }
         .confirm-btn.red { background: #ef4444; color: white; }
+
+        /* ✅ نافذة تعديل الطلب */
+        .edit-box { max-width: 520px; max-height: 90vh; overflow-y: auto; text-align: right; }
+        .edit-section { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 6px; }
+        .edit-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+        .edit-field label { color: var(--text-muted); font-size: 0.8em; font-weight: bold; }
+        .edit-field .reason-input { margin-bottom: 0; }
+        .num-input { direction: ltr; text-align: center; font-weight: bold; }
+        .edit-hint { color: var(--text-muted) !important; font-size: 0.78em !important; line-height: 1.5; margin: 0 0 14px 0 !important; }
+        .edit-items { background: var(--bg-base); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 18px; }
+        .edit-items-title { display: block; color: var(--gold); font-weight: bold; font-size: 0.9em; margin-bottom: 10px; }
+        .edit-item { border-bottom: 1px dashed var(--border); padding-bottom: 10px; margin-bottom: 10px; }
+        .edit-item:last-of-type { border-bottom: none; margin-bottom: 4px; }
+        .edit-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .edit-item-title { color: var(--text-primary); font-size: 0.9em; }
+        .type-pill { background: var(--gold-dim); color: var(--gold); border: 1px solid var(--border-accent); border-radius: 12px; padding: 2px 10px; font-size: 0.75em; font-weight: bold; flex-shrink: 0; }
+        .report-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+        .report-chips .label { margin: 0; }
+        .report-chip { background: var(--gold-dimmer); color: var(--gold); border: 1px solid var(--border-accent); border-radius: 12px; padding: 2px 10px; font-size: 0.78em; }
 
         .toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--bg-elevated); color: var(--text-primary); padding: 12px 25px; border-radius: 50px; font-weight: bold; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); opacity: 0; border: 1px solid var(--border); }
         .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
