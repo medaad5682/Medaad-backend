@@ -341,14 +341,22 @@ export default function StudentsPage() {
                               disabled={viaPackage}
                               onChange={() => toggleGrantItem('courses', full.id)}
                           />
-                          <span className="leader-card-title">{full.title}</span>
-                          {teacherName && <span className="badge-owned">{teacherName}</span>}
-                          {viaPackage && <span className="badge-owned">ضمن الباقة المحددة</span>}
+                          <span className="leader-card-text">
+                              <span className="leader-card-title">{full.title}</span>
+                              {(teacherName || viaPackage) && (
+                                  <span className="leader-card-meta">
+                                      {teacherName && <span className="badge-owned">{teacherName}</span>}
+                                      {viaPackage && <span className="badge-owned">ضمن الباقة المحددة</span>}
+                                  </span>
+                              )}
+                          </span>
                       </label>
                   ) : (
                       <div className="leader-card-label disabled-row">
-                          <span className="leader-card-title">{full.title}</span>
-                          <span className="badge-owned">(مملوك مسبقاً)</span>
+                          <span className="leader-card-text">
+                              <span className="leader-card-title">{full.title}</span>
+                              <span className="leader-card-meta"><span className="badge-owned">(مملوك مسبقاً)</span></span>
+                          </span>
                       </div>
                   )}
                   {hasSubjects && (
@@ -852,24 +860,39 @@ export default function StudentsPage() {
 
         .filter-subs { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
 
-        /* 👑 تنظيم نافذة المنح للقائد: باقات / كورسات / مواد */
+        /* 👑 تنظيم نافذة المنح للقائد: باقات / كورسات / مواد
+           ملاحظة: بطاقات الكورسات تُرسم من دالة مساعدة خارج الـ JSX الرئيسي، و styled-jsx
+           لا يضيف لها كلاس النطاق تلقائياً — لذلك تُكتب هنا بـ :global تحت .grant-modal. */
         .package-group { padding: 0; overflow: hidden; }
-        .package-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; }
+        .package-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; }
         .package-header-label { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; cursor: pointer; }
-        .package-header-label input[type="checkbox"] { flex-shrink: 0; }
-        .package-body { display: flex; flex-direction: column; gap: 10px; padding: 0 16px 16px; border-top: 1px dashed var(--border); padding-top: 14px; }
-        .arrow-btn { flex-shrink: 0; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--gold); font-size: 1.1rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s, background 0.2s, border-color 0.2s; }
-        .arrow-btn:hover { background: var(--gold-dimmer); border-color: var(--gold); }
-        .arrow-btn.open { transform: rotate(180deg); }
-        .arrow-btn.small { width: 28px; height: 28px; font-size: 1rem; border-radius: 8px; }
-        .leader-course-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
-        .leader-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-        .leader-card-label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; cursor: pointer; }
-        .leader-card-label.disabled-row { cursor: not-allowed; opacity: 0.6; }
-        .leader-card-title { font-weight: 600; color: var(--text-primary); }
-        .leader-subs { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+        .package-header-label input[type="checkbox"] { flex-shrink: 0; width: 18px; height: 18px; accent-color: var(--gold); }
+        .package-body { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px; border-top: 1px dashed var(--border); }
         .standalone-section { margin-top: 6px; display: flex; flex-direction: column; gap: 10px; }
-        .section-title { font-weight: 800; color: var(--text-primary); padding: 6px 2px; border-bottom: 1px solid var(--border); }
+        .section-title { font-weight: 800; color: var(--text-primary); padding: 6px 2px 10px; border-bottom: 1px solid var(--border); }
+
+        .grant-modal :global(.arrow-btn) { flex-shrink: 0; width: 34px; height: 34px; padding: 0; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--gold); font-size: 1.1rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s, background 0.2s, border-color 0.2s; }
+        .grant-modal :global(.arrow-btn:hover) { background: var(--gold-dimmer); border-color: var(--gold); }
+        .grant-modal :global(.arrow-btn.open) { transform: rotate(180deg); }
+        .grant-modal :global(.arrow-btn.small) { width: 30px; height: 30px; font-size: 1rem; border-radius: 8px; }
+
+        .grant-modal :global(.leader-course-card) { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; transition: 0.2s; }
+        .grant-modal :global(.leader-course-card:hover) { border-color: var(--border-accent); }
+        .grant-modal :global(.leader-card-head) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .grant-modal :global(.leader-card-label) { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; cursor: pointer; }
+        .grant-modal :global(.leader-card-label input[type="checkbox"]) { flex-shrink: 0; width: 18px; height: 18px; accent-color: var(--gold); margin: 0; }
+        .grant-modal :global(.leader-card-label.disabled-row) { cursor: not-allowed; opacity: 0.6; }
+        .grant-modal :global(.leader-card-text) { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .grant-modal :global(.leader-card-title) { font-weight: 600; font-size: 0.95rem; color: var(--text-primary); overflow-wrap: anywhere; }
+        .grant-modal :global(.leader-card-meta) { display: flex; flex-wrap: wrap; gap: 6px; }
+        .grant-modal :global(.leader-card-meta .badge-owned) { margin: 0; }
+        .grant-modal :global(.leader-subs) { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+        .grant-modal :global(.leader-subs .checkbox-row.sub) { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-elevated); font-size: 0.9em; font-weight: 500; color: var(--text-secondary); cursor: pointer; }
+        .grant-modal :global(.leader-subs .checkbox-row.sub:hover) { border-color: var(--gold); color: var(--text-primary); }
+        .grant-modal :global(.leader-subs .checkbox-row.sub input) { flex-shrink: 0; accent-color: var(--gold); margin: 0; }
+        .grant-modal :global(.leader-subs.filter-subs) { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+        .grant-modal :global(.badge-owned) { font-size: 0.75rem; background: var(--bg-elevated); color: var(--text-muted); padding: 2px 8px; border-radius: 12px; border: 1px solid var(--border); font-weight: 600; white-space: nowrap; }
+        .grant-modal :global(.empty-text) { color: var(--text-muted); font-size: 0.85rem; }
 
         /* 📦 Package rows (leader grant modal) */
         .package-row { width: 100%; justify-content: flex-start; align-items: flex-start; margin-bottom: 10px; }
