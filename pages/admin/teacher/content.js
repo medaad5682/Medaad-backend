@@ -115,6 +115,7 @@ export default function ContentManager() {
   // يستطيع المعلم إغلاق نافذة "إضافة فيديو" أثناء الرفع وفتح نافذة أخرى
   // لفصل/مادة/كورس مختلف والرفع يستمر في الخلفية عبر الودجت العائم أسفل الشاشة.
   const [videoFile, setVideoFile] = useState(null);
+  const [editingVideo, setEditingVideo] = useState(null); // الفيديو الجاري تعديل عنوانه (تعديل العنوان فقط — بدون إعادة رفع)
   const {
     uploads: bunnyUploads,
     activeCount: activeUploadsCount,
@@ -681,6 +682,15 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
           });
       }
 
+      if (type === 'edit_video') {
+          // تعديل عنوان الفيديو فقط — لا يمس ملف الفيديو ولا رابط يوتيوب ولا المدة
+          setEditingVideo(data);
+          setFormData({
+              title: data.title || '', url: '', price: 0, description: '',
+              notifyStudents: false, durHours: '', durMinutes: '', durSeconds: '', folderName: ''
+          });
+      }
+
       if (['add_chapter', 'edit_chapter'].includes(type)) {
           // لو الفصل الحالي (عند التعديل) له مجلد بالفعل، أو المادة تحتوي
           // على مجلدات موجودة مسبقاً، نبدأ بوضع "اختيار من الموجود" لتسهيل
@@ -761,6 +771,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
       if(modalType?.includes('subject')) return modalType.includes('add') ? 'إضافة مادة' : 'تعديل المادة';
       if(modalType?.includes('chapter')) return modalType.includes('add') ? 'إضافة فصل' : 'تعديل الفصل';
       if(modalType === 'add_video') return 'إضافة فيديو';
+      if(modalType === 'edit_video') return 'تعديل عنوان الفيديو';
       return '';
   };
 
@@ -1176,6 +1187,13 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                                       >
                                           {Icons.eye}
                                       </button>
+                                      <button
+                                          className="btn-icon"
+                                          title="تعديل عنوان الفيديو"
+                                          onClick={() => openModal('edit_video', v)}
+                                      >
+                                          {Icons.edit}
+                                      </button>
                                       <button className="btn-icon danger" onClick={() => handleDelete('videos', v.id)}>
                                           {Icons.trash}
                                       </button>
@@ -1212,7 +1230,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
       )}
 
       {/* --- Unified Modal System --- */}
-      {['add_course', 'edit_course', 'add_subject', 'edit_subject', 'add_chapter', 'edit_chapter', 'add_video'].includes(modalType) && (
+      {['add_course', 'edit_course', 'add_subject', 'edit_subject', 'add_chapter', 'edit_chapter', 'add_video', 'edit_video'].includes(modalType) && (
           <Modal title={getModalTitle()} onClose={() => setModalType(null)} closeOnOverlayClick={true}>
               <div className="form-group">
                   <label>العنوان</label>
@@ -1417,6 +1435,13 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                       else if (modalType === 'edit_chapter') apiCall('update', 'chapters', { id: selectedChapter.id, title: formData.title, folder_name: formData.folderName?.trim() || null });
                       
                       else if (modalType === 'add_video') handleSaveVideo();
+
+                      else if (modalType === 'edit_video') {
+                          const newTitle = (formData.title || '').trim();
+                          if (!newTitle) return showAlert('error', 'اكتب عنوان الفيديو');
+                          if (newTitle === (editingVideo?.title || '').trim()) return setModalType(null); // لا تغيير
+                          apiCall('update', 'videos', { id: editingVideo.id, title: newTitle });
+                      }
                   }}>حفظ</button>
               </div>
           </Modal>

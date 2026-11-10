@@ -366,6 +366,12 @@ export default async (req, res) => {
          const { id, ...updates } = data;
          let isAuthorized = false;
 
+         // ✏️ تعديل العنوان (مثلاً إعادة تسمية فيديو دون إعادة رفعه): نقصّ المسافات ونرفض العنوان الفارغ
+         if (updates.title !== undefined && ['videos', 'pdfs'].includes(type)) {
+             updates.title = String(updates.title ?? '').trim();
+             if (!updates.title) return res.status(400).json({ error: 'العنوان لا يمكن أن يكون فارغاً.' });
+         }
+
          // 🚀 معالجة الفيديو في حالة تعديل الرابط
          const videoUrl = updates.url || updates.youtube_video_id;
          if (type === 'videos' && videoUrl) {
