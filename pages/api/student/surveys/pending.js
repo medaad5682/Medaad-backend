@@ -1,5 +1,6 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../../lib/authHelper';
+import { checkSurveyEligibility } from '../../../../lib/surveyEligibility';
 
 // ==========================================================
 // 🟢 GET /api/student/surveys/pending
@@ -8,6 +9,7 @@ import { checkUserAccess } from '../../../../lib/authHelper';
 //   - بدأ وقته بالفعل (starts_at is null أو أقل من/يساوي الآن)
 //   - لم تنتهِ صلاحيته (expires_at is null أو أكبر من الآن)
 //   - المستخدم الحالي لم يجاوب عليه من قبل (لا يوجد صف في survey_responses)
+//   - الحساب طالب (ليس مدرساً/مشرفاً/أدمن) وعمره 3 أسابيع على الأقل
 // لو مفيش أي استبيان مطابق -> survey: null
 // ==========================================================
 export default async function handler(req, res) {
@@ -22,21 +24,11 @@ export default async function handler(req, res) {
   try {
     const nowIso = new Date().toISOString();
 
-    // 🆕 لازم يكون الحساب عمره 3 أسابيع على الأقل قبل ما نعرضله أي استبيان
-    const { data: userRow, error: userErr } = await supabase
-      .from('users')
-      .select('created_at')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (userErr) throw userErr;
-
-    if (userRow?.created_at) {
-      const THREE_WEEKS_MS = 21 * 24 * 60 * 60 * 1000;
-      const accountAgeMs = Date.now() - new Date(userRow.created_at).getTime();
-      if (accountAgeMs < THREE_WEEKS_MS) {
-        return res.status(200).json({ success: true, survey: null });
-      }
+    // 🆕 الاستبيان للطلبة فقط، وبشرط أن يكون عمر الحساب 3 أسابيع على الأقل
+    // (لا يظهر للمدرسين ولا المشرفين ولا الحسابات الجديدة)
+    const eligibility = await checkSurveyEligibility(userId);
+    if (!eligibility.eligible) {
+      return res.status(200).json({ success: true, survey: null });
     }
 
     // كل الاستبيانات النشطة، اللي بدأ وقتها، وغير منتهية الصلاحية

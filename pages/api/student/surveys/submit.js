@@ -1,5 +1,6 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../../lib/authHelper';
+import { checkSurveyEligibility } from '../../../../lib/surveyEligibility';
 
 // ==========================================================
 // 🟠 POST /api/student/surveys/submit
@@ -27,6 +28,12 @@ export default async function handler(req, res) {
   }
 
   try {
+    // 🆕 نفس شرط العرض: طالب فقط وعمر حسابه 3 أسابيع على الأقل
+    const eligibility = await checkSurveyEligibility(userId);
+    if (!eligibility.eligible) {
+      return res.status(403).json({ success: false, message: 'هذا الاستبيان غير متاح لحسابك' });
+    }
+
     // تأكد أن الاستبيان لا يزال نشطاً ولم تنتهِ صلاحيته
     const { data: survey, error: surveyErr } = await supabase
       .from('surveys')
