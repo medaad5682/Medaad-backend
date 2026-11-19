@@ -1,6 +1,6 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { verifyTeacher } from '../../../lib/teacherAuth';
-import { notifyStudentSubscriptionDecision } from '../../../lib/notifyHelper';
+import { notifyStudentSubscriptionDecision, notifyStudentsManualActivation } from '../../../lib/notifyHelper';
 import { buildGrantTimestamps, isExemptFromExpiry } from '../../../lib/accessExpiryHelper';
 
 export default async (req, res) => {
@@ -178,7 +178,8 @@ export default async (req, res) => {
 
          if (decision === 'reject') {
              await supabase.from('subscription_requests')
-                 .update({ status: 'rejected', rejection_reason: rejectionReason || 'تم الرفض' })
+                 // 🕒 وقت الطلب يتحدّث لوقت اتخاذ القرار (رفض)
+                 .update({ status: 'rejected', rejection_reason: rejectionReason || 'تم الرفض', created_at: new Date().toISOString() })
                  .eq('id', requestId);
                  
              // ♻️ التعديل الجديد: إعادة تفعيل كود الخصم (إن وُجد) لكي يتمكن الطالب من استخدامه مجدداً
@@ -230,7 +231,8 @@ export default async (req, res) => {
                  }
              }
 
-             await supabase.from('subscription_requests').update({ status: 'approved', user_id: targetUserId }).eq('id', requestId);
+             // 🕒 وقت الطلب يتحدّث لوقت اتخاذ القرار (قبول)
+             await supabase.from('subscription_requests').update({ status: 'approved', user_id: targetUserId, created_at: new Date().toISOString() }).eq('id', requestId);
 
              // 🔔 إشعار الطالب بالقبول
              await notifyStudentSubscriptionDecision({
@@ -324,6 +326,12 @@ export default async (req, res) => {
 
             await supabase.from(type === 'course' ? 'user_course_access' : 'user_subject_access')
                .upsert({ user_id: studentId, [`${type}_id`]: itemId, granted_at, expires_at: exemptFromExpiry ? null : expires_at }, { onConflict: `user_id, ${type}_id` });
+
+            // 🔔 إشعار الطالب بالتفعيل اليدوي من التطبيق
+            await notifyStudentsManualActivation({
+                activations: [{ userId: studentId, title: contentTitle }],
+                senderRole: 'teacher'
+            });
 
          } else {
             // حالة الحذف (إلغاء الصلاحية)

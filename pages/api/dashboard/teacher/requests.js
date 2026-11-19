@@ -79,7 +79,8 @@ export default async (req, res) => {
       if (action === 'reject') {
          // أ. تحديث حالة الطلب إلى مرفوض
          await supabase.from('subscription_requests')
-           .update({ status: 'rejected', rejection_reason: rejectionReason || 'مرفوض' })
+           // 🕒 وقت الطلب يتحدّث لوقت اتخاذ القرار (رفض)
+           .update({ status: 'rejected', rejection_reason: rejectionReason || 'مرفوض', created_at: new Date().toISOString() })
            .eq('id', requestId);
 
          // ب. ♻️ إعادة تفعيل كود الخصم (إن وُجد) لكي يتمكن الطالب من استخدامه مجدداً
@@ -139,7 +140,8 @@ export default async (req, res) => {
              }
          }
 
-         await supabase.from('subscription_requests').update({ status: 'approved', user_id: targetUserId }).eq('id', requestId);
+         // 🕒 وقت الطلب يتحدّث لوقت اتخاذ القرار (قبول)
+         await supabase.from('subscription_requests').update({ status: 'approved', user_id: targetUserId, created_at: new Date().toISOString() }).eq('id', requestId);
 
          // 🔔 إشعار الطالب بالقبول
          await notifyStudentSubscriptionDecision({

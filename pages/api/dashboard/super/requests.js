@@ -274,7 +274,8 @@ export default async function handler(req, res) {
           .from('subscription_requests')
           .update({ 
             status: 'rejected', 
-            rejection_reason: rejectionReason || 'مرفوض من قبل الإدارة' 
+            rejection_reason: rejectionReason || 'مرفوض من قبل الإدارة',
+            created_at: new Date().toISOString() // 🕒 وقت الطلب يتحدّث لوقت الرفض
           })
           .eq('id', requestId);
 
@@ -360,7 +361,8 @@ export default async function handler(req, res) {
           .update({ 
             status: 'approved', 
             user_id: targetUserId,
-            rejection_reason: null
+            rejection_reason: null,
+            created_at: new Date().toISOString() // 🕒 وقت الطلب يتحدّث لوقت القبول
           })
           .eq('id', requestId);
 

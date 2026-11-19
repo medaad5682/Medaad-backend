@@ -3,6 +3,7 @@ import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { buildGrantTimestamps, isExemptFromExpiry } from '../../../../lib/accessExpiryHelper';
 import { getTeacherTeamContext, getTeamPackages } from '../../../../lib/teamHelper';
 import { grantPackagesToUsers } from '../../../../lib/grantHelper';
+import { notifyStudentsManualActivation } from '../../../../lib/notifyHelper';
 
 // 🔒 سعر التقرير (report_price) بيانات مالية داخلية — لا تُرسل لمتصفح المدرس/القائد.
 // نحذفه من الباقة ومن كل كورس بداخلها قبل الإرسال. (منطق المنح في السيرفر
@@ -467,6 +468,16 @@ export default async (req, res) => {
                       usersData: usersData || [],
                   });
               }
+
+              // 🔔 إشعار الطلاب بالتفعيل اليدوي (قائد فريق أو مدرس عادي — نفس المسار).
+              // نُرسل فقط للعناصر التي فُعّلت فعلاً (التي سُجّل لها طلب اشتراك)، فلا إشعار لمن يملكها مسبقاً.
+              await notifyStudentsManualActivation({
+                  activations: [
+                      ...reqInserts.map(r => ({ userId: r.user_id, title: r.course_title })),
+                      ...(packageResult.activated || [])
+                  ],
+                  senderRole: 'teacher'
+              });
 
               const nothingHappened = reqInserts.length === 0 && cInserts.length === 0 && sInserts.length === 0
                 && packageResult.requestsInserted === 0 && packageResult.coursesGranted === 0;
