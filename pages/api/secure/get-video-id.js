@@ -144,10 +144,12 @@ async function extractBunnyQualities(masterUrl, log, errLog, videoInfo = '') {
 
 export default async (req, res) => {
     const reqId = Math.random().toString(36).substring(7).toUpperCase();
-    const log = (msg) => console.log(`🔍 [DEBUG-${reqId}] ${msg}`);
-    const errLog = (msg) => console.error(`❌ [ERROR-${reqId}] ${msg}`);
 
-    log("🚀 Start Request: get-video-id");
+// تعطيل جميع DEBUG logs
+const log = () => {};
+
+// الاحتفاظ بتسجيل الأخطاء الحقيقية فقط
+const errLog = (msg) => console.error(`❌ [ERROR-${reqId}] ${msg}`);
 
     const { lessonId } = req.query;
 
