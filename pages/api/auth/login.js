@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { BASE_URL } from '../../../lib/config'; // ✅ 1. استيراد ملف الإعدادات الموحد
 import admin from '../../../lib/firebaseAdmin'; // ✅ إضافة استيراد فايربيز آدمن للتحقق
 import { verifyClientAttestation } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
+import { invalidateUserCaches } from '../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 export default async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ message: 'Method Not Allowed' });
@@ -156,6 +157,8 @@ export default async (req, res) => {
         .eq('id', user.id);
 
     if (updateError) throw updateError;
+
+    invalidateUserCaches(user.id); // 🗄️ توكن/جهاز جديد: أي جهاز قديم يخرج فوراً
 
     // ✅ طباعة بيانات تسجيل الدخول الناجح مع الـ Device ID
     console.log(`✅ [Login Success]: User ID: ${user.id} | Username: ${user.username} | Device ID: ${deviceId}`);

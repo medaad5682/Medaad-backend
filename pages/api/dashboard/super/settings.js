@@ -10,6 +10,7 @@ import {
   defaultAutoEnrollConfig,
   normalizeAutoEnrollConfig,
 } from '../../../../lib/autoEnrollHelper';
+import { invalidateAppSettings } from '../../../../lib/appSettingsCache'; // ⚙️ كاش الإعدادات
 
 export default async function handler(req, res) {
   // 1. التحقق من الصلاحية (سوبر أدمن فقط)
@@ -144,6 +145,8 @@ export default async function handler(req, res) {
         .upsert(rowsToUpsert, { onConflict: 'key' });
 
       if (error) throw error;
+
+      invalidateAppSettings(); // ⚙️ تحديث فوري لكاش الإعدادات بعد الحفظ
 
       return res.status(200).json({ success: true, message: 'تم حفظ الإعدادات بنجاح' });
 

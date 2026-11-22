@@ -2,6 +2,7 @@ import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
 import { buildGrantTimestamps, isExemptFromExpiry } from '../../../../lib/accessExpiryHelper';
 import bcrypt from 'bcryptjs'; // ✅ استخدام bcryptjs بناءً على طلبك
+import { invalidateUserCaches, invalidateAllAccessCaches } from '../../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 // حد أقصى لحجم الصفحة (نفس القاعدة المستخدمة في لوحة المعلم)
 const MAX_PAGE_SIZE = 100;
@@ -356,6 +357,10 @@ export default async function handler(req, res) {
     } catch (err) {
       console.error(`Error in action ${action}:`, err);
       return res.status(500).json({ success: false, error: 'حدث خطأ: ' + err.message });
+    } finally {
+      // 🗄️ إبطال الكاش بعد أي إجراء إداري (حظر/فك حظر/تصفير جهاز/حذف/سحب صلاحية/تعديل بيانات)
+      if (action === 'delete_all_course_students') invalidateAllAccessCaches();
+      invalidateUserCaches([].concat(targetIds || [], userId || []));
     }
   }
 

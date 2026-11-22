@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import admin from '../../../lib/firebaseAdmin'; // ✅ إضافة استيراد فايربيز آدمن للتحقق
 import { verifyClientAttestation } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 import { isAccessRowActive } from '../../../lib/accessExpiryHelper'; // ⏳ فحص انتهاء صلاحية الوصول (Feature B)
+import { getAccessRows } from '../../../lib/accessCache'; // 🗄️ صفوف اشتراك الطالب (كاش قصير؛ التحكم: cacheConfig.js)
 
 export default async (req, res) => {
   if (req.method !== 'GET') return res.status(405).json({ message: 'Method Not Allowed' });
@@ -104,24 +105,39 @@ export default async (req, res) => {
     let ownedSubjects = new Set();
 
     if (userId) {
-      // أ) هل اشترى الكورس بالكامل؟ (⏳ اشتراك منتهي = غير مملوك، يسمح له بإعادة الشراء/التجديد)
-      const { data: cAccess } = await supabase
-        .from('user_course_access')
-        .select('id, expires_at')
-        .eq('user_id', userId)
-        .eq('course_id', course.id)
-        .maybeSingle();
+      // 🗄️ نقرأ صفوف اشتراك الطالب من الكاش بدل قراءة user_course_access و user_subject_access
+      // في كل مرة. قاعدة الأمان/الحداثة: "مملوك" يُصدَّق من الكاش، لكن "غير مملوك" يُتأكد منه
+      // من الداتابيز (حتى لا يرى الطالب زر الشراء لكورس اشتراه للتو).
+      const computeOwnership = (rows) => {
+        let oc = false;
+        const os = new Set();
 
-      if (cAccess && isAccessRowActive(cAccess)) ownedCourse = true;
+        // أ) هل اشترى الكورس بالكامل؟ (⏳ اشتراك منتهي = غير مملوك، يسمح له بإعادة الشراء/التجديد)
+        const cAccess = rows.courseMap.get(String(course.id));
+        if (cAccess && isAccessRowActive(cAccess)) oc = true;
 
-      // ب) هل اشترى مواد منفصلة؟ (⏳ نفس المنطق لكل مادة على حدة)
-      const { data: sAccess } = await supabase
-        .from('user_subject_access')
-        .select('subject_id, expires_at')
-        .eq('user_id', userId)
-        .in('subject_id', course.subjects.map(s => s.id));
+        // ب) هل اشترى مواد منفصلة؟ (⏳ نفس المنطق لكل مادة على حدة)
+        (course.subjects || []).forEach(sub => {
+          const sAccess = rows.subjectMap.get(String(sub.id));
+          if (sAccess && isAccessRowActive(sAccess)) os.add(sub.id);
+        });
+        return { oc, os };
+      };
 
-      sAccess?.filter(isAccessRowActive).forEach(a => ownedSubjects.add(a.subject_id));
+      const { rows, fromCache } = await getAccessRows(userId);
+
+      if (rows) {
+        let result = computeOwnership(rows);
+
+        // لو الكورس غير مملوك بالكامل والنتيجة جاءت من الكاش: نعيد التأكد من الداتابيز
+        if (!result.oc && fromCache) {
+          const fresh = await getAccessRows(userId, { fresh: true });
+          if (fresh.rows) result = computeOwnership(fresh.rows);
+        }
+
+        ownedCourse = result.oc;
+        ownedSubjects = result.os;
+      }
     }
 
     // 5. إرجاع البيانات

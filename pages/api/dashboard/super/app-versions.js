@@ -8,6 +8,7 @@
 // ------------------------------------------------------------------
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
+import { invalidateAppVersions } from '../../../../lib/appVersionCache'; // 📱 إبطال كاش check-version
 
 const PLATFORMS = ['android', 'ios', 'huawei'];
 const VERSION_REGEX = /^\d+(\.\d+){0,3}$/;
@@ -71,6 +72,7 @@ export default async function handler(req, res) {
         .select();
 
       if (error) throw error;
+      invalidateAppVersions(); // 📱 التحديث الإجباري/الإصدار الجديد يظهر فوراً في check-version
       if (!data || data.length === 0) return res.status(404).json({ error: 'الصف غير موجود' });
       return res.status(200).json(data[0]);
     } catch (error) {
@@ -112,6 +114,7 @@ export default async function handler(req, res) {
         .select();
 
       if (error) throw error;
+      invalidateAppVersions(); // 📱 الصف الجديد يظهر فوراً
       return res.status(200).json(data[0]);
     } catch (error) {
       return res.status(500).json({ error: error.message });

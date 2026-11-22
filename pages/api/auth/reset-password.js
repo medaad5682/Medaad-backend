@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import bcrypt from 'bcryptjs';
 import { consumeVerifyToken } from '../../../lib/otpHelper';
 import { verifyClientAttestation, ATTESTATION_FAILED_MESSAGE } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
+import { invalidateUserCaches } from '../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -82,6 +83,8 @@ export default async (req, res) => {
       .eq('id', user.id);
 
     if (updateError) throw updateError;
+
+    invalidateUserCaches(user.id); // 🗄️ الجلسة القديمة أُبطلت في الداتابيز، نبطلها في الكاش أيضاً
 
     return res.status(200).json({ success: true, message: 'تم تغيير كلمة المرور بنجاح' });
   } catch (error) {

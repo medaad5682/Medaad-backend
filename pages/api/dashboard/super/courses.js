@@ -54,6 +54,7 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
 import { buildActiveAccessFilter, recalculateExistingAccess } from '../../../../lib/accessExpiryHelper';
+import { invalidateAllAccessCaches } from '../../../../lib/accessCache'; // 🗄️ إبطال كاش الاشتراكات بعد إعادة حساب المدد
 
 export default async function handler(req, res) {
   const authResult = await requireSuperAdmin(req, res);
@@ -272,34 +273,41 @@ async function setAccessDuration(req, res) {
   let recalcResult = null;
   let cascadedSubjectsCount = 0;
   if (applyToExisting) {
-    recalcResult = await recalculateExistingAccess({
-      courseId,
-      subjectId: subjectId || null,
-      durationDays: value,
-    });
+    try {
+      recalcResult = await recalculateExistingAccess({
+        courseId,
+        subjectId: subjectId || null,
+        durationDays: value,
+      });
 
-    // A course-level change also flows down to that course's subjects —
-    // but ONLY the ones with no access_duration_days override of their
-    // own (they inherit the course policy). A subject with its own
-    // explicit period is left alone; it's managed independently.
-    if (!subjectId) {
-      const { data: inheritingSubjects, error: subjError } = await supabase
-        .from('subjects')
-        .select('id')
-        .eq('course_id', courseId)
-        .is('access_duration_days', null);
-      if (subjError) throw subjError;
+      // A course-level change also flows down to that course's subjects —
+      // but ONLY the ones with no access_duration_days override of their
+      // own (they inherit the course policy). A subject with its own
+      // explicit period is left alone; it's managed independently.
+      if (!subjectId) {
+        const { data: inheritingSubjects, error: subjError } = await supabase
+          .from('subjects')
+          .select('id')
+          .eq('course_id', courseId)
+          .is('access_duration_days', null);
+        if (subjError) throw subjError;
 
-      let subjectsUpdatedStudents = 0;
-      for (const subj of inheritingSubjects || []) {
-        const subjResult = await recalculateExistingAccess({
-          subjectId: subj.id,
-          durationDays: value,
-        });
-        subjectsUpdatedStudents += subjResult.updated;
+        let subjectsUpdatedStudents = 0;
+        for (const subj of inheritingSubjects || []) {
+          const subjResult = await recalculateExistingAccess({
+            subjectId: subj.id,
+            durationDays: value,
+          });
+          subjectsUpdatedStudents += subjResult.updated;
+        }
+        cascadedSubjectsCount = (inheritingSubjects || []).length;
+        recalcResult.updated += subjectsUpdatedStudents;
       }
-      cascadedSubjectsCount = (inheritingSubjects || []).length;
-      recalcResult.updated += subjectsUpdatedStudents;
+    } finally {
+      // 🗄️ إعادة حساب expires_at للاشتراكات الحالية (قد تُقصّر المدة): نبطل كاش الاشتراكات
+      // لكل الطلاب فوراً بدل انتظار انتهاء مدة الكاش (60 ثانية). في finally حتى لو فشلت
+      // العملية في منتصفها بعد تحديث جزء من الصفوف.
+      invalidateAllAccessCaches();
     }
   }
 

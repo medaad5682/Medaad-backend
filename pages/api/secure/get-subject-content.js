@@ -1,7 +1,8 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper';
 import { parsePlayerSettings, defaultPlayerSettings } from '../../../lib/playerSettingsHelper';
-import { isAccessRowActive } from '../../../lib/accessExpiryHelper'; // ⏳ فحص انتهاء صلاحية الوصول (Feature B)
+import { checkSubjectAccess } from '../../../lib/accessCache'; // 🗄️ فحص الصلاحية المشترك (⏳ يراعي انتهاء الصلاحية — Feature B)
+import { getSetting } from '../../../lib/appSettingsCache'; // ⚙️ كاش الإعدادات (التحكم: cacheConfig.js)
 
 export default async (req, res) => {
   if (req.method !== 'GET') return res.status(405).json({ message: 'Method Not Allowed' });
@@ -24,43 +25,10 @@ export default async (req, res) => {
 
   try {
     // 3. التحقق من الاشتراك (Subscription Check) — ⏳ مع مراعاة انتهاء الصلاحية
-    const { data: subAccess } = await supabase
-      .from('user_subject_access')
-      .select('id, expires_at')
-      .eq('user_id', userId)
-      .eq('subject_id', subjectId)
-      .maybeSingle();
-
-    let hasAccess = false;
-    let sawExpiredRow = false; // ⏳ لتمييز "منتهي" عن "لم يشترك أبداً" في رسالة الخطأ
-
-    if (subAccess) {
-      if (isAccessRowActive(subAccess)) {
-        hasAccess = true;
-      } else {
-        sawExpiredRow = true;
-      }
-    }
-
-    if (!hasAccess) {
-      const { data: subjectInfo } = await supabase.from('subjects').select('course_id').eq('id', subjectId).single();
-      if (subjectInfo && subjectInfo.course_id) {
-        const { data: courseAccess } = await supabase
-          .from('user_course_access')
-          .select('id, expires_at')
-          .eq('user_id', userId)
-          .eq('course_id', subjectInfo.course_id)
-          .maybeSingle();
-
-        if (courseAccess) {
-          if (isAccessRowActive(courseAccess)) {
-            hasAccess = true;
-          } else {
-            sawExpiredRow = true;
-          }
-        }
-      }
-    }
+    // 🗄️ نفس الدالة المشتركة التي يستخدمها authHelper (كاش صفوف الاشتراك؛ الرفض يُتأكد منه من الداتابيز)
+    const access = await checkSubjectAccess(userId, subjectId);
+    const hasAccess = access.ok;
+    const sawExpiredRow = access.expired; // ⏳ لتمييز "منتهي" عن "لم يشترك أبداً" في رسالة الخطأ
 
     if (!hasAccess) {
       // ⏳ نميّز بين "لم يشترك أبداً" و"انتهت صلاحية اشتراكه" حتى يستطيع التطبيق
@@ -91,28 +59,21 @@ export default async (req, res) => {
     if (contentError) throw contentError;
 
     // ✅ 4.5 معرفة ما إذا كان المستخدم الحالي هو المدرس صاحب الكورس
-    const { data: currentUser } = await supabase
-      .from('users')
-      .select('teacher_profile_id')
-      .eq('id', userId)
-      .single();
-      
+    // 🗄️ بيانات المستخدم جاهزة من authHelper (بدون قراءة users مرة ثانية)
+    const currentUser = req.authUser;
+
     const isOwner = currentUser?.teacher_profile_id && 
                     String(currentUser.teacher_profile_id) === String(subjectData.courses?.teacher_id);
 
     // ✅ 5. جلب إعدادات المشغلات (Player Settings) من جدول app_settings ديناميكياً
-    const { data: settingsData } = await supabase
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'player_settings')
-      .maybeSingle();
+    const playerSettingsValue = await getSetting('player_settings');
 
     // ✅ إعدادات ديناميكية: مصفوفة "players" غير محدودة العدد بدلاً من
     // خانات ثابتة (player_1/2/3). الدالة تتكفل أيضاً بتحويل أي بيانات
     // قديمة محفوظة بالشكل السابق تلقائياً، وبإرجاع قيم افتراضية آمنة
     // إذا لم يوجد أي إعداد محفوظ بعد.
-    const playerSettings = settingsData?.value
-      ? parsePlayerSettings(settingsData.value)
+    const playerSettings = playerSettingsValue
+      ? parsePlayerSettings(playerSettingsValue)
       : defaultPlayerSettings();
 
     // 6. جلب محاولات الطالب المكتملة (بشكل آمن)

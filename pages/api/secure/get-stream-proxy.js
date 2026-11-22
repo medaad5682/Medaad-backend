@@ -1,6 +1,7 @@
 import { supabase } from '../../../lib/supabaseClient';
 import axios from 'axios';
 import { checkUserAccess } from '../../../lib/authHelper';
+import { getSetting } from '../../../lib/appSettingsCache'; // ⚙️ كاش الإعدادات (التحكم: cacheConfig.js)
 
 // ✅ 1. استيراد مكتبات Firebase
 import { db } from '../../../lib/firebaseAdmin';
@@ -83,11 +84,8 @@ export default async (req, res) => {
         // ================================================================
         try {
             if (userId) {
-                const { data: studentData } = await supabase
-                    .from('users')
-                    .select('first_name, username')
-                    .eq('id', userId)
-                    .maybeSingle();
+                // 🗄️ البيانات جاهزة من authHelper (بدون قراءة users مرة ثانية)
+                const studentData = req.authUser;
 
                 const studentFullName = studentData 
                     ? (studentData.first_name || studentData.username || 'مستخدم') 
@@ -202,12 +200,8 @@ export default async (req, res) => {
         // 6. تجهيز الرد
         const thumbnail = `https://i.ytimg.com/vi/${youtubeId}/maxresdefault.jpg`;
 
-        const { data: settingResult } = await supabase
-            .from('app_settings')
-            .select('value')
-            .eq('key', 'offline_mode')
-            .single();
-        const isOfflineMode = settingResult ? settingResult.value === 'true' : true;
+        const offlineModeValue = await getSetting('offline_mode');
+        const isOfflineMode = (offlineModeValue !== null && offlineModeValue !== undefined) ? offlineModeValue === 'true' : true;
 
         return res.status(200).json({
             availableQualities: filteredQualities,

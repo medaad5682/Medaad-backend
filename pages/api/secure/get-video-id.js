@@ -1,6 +1,7 @@
 import { supabase } from '../../../lib/supabaseClient';
 import axios from 'axios';
 import { checkUserAccess } from '../../../lib/authHelper';
+import { getSetting } from '../../../lib/appSettingsCache'; // ⚙️ كاش الإعدادات (التحكم: cacheConfig.js)
 import crypto from 'crypto'; // ✅ استيراد مكتبة التشفير
 
 // ✅ 1. استيراد مكتبات Firebase
@@ -212,11 +213,8 @@ export default async (req, res) => {
                 const docId = `${lessonId}_${studentId}`;
 
                 // جلب اسم الطالب (الاعتماد على first_name ثم username)
-                const { data: studentData } = await supabase
-                    .from('users')
-                    .select('first_name, username')
-                    .eq('id', studentId)
-                    .maybeSingle();
+                // 🗄️ البيانات جاهزة من authHelper (بدون قراءة users مرة ثانية)
+                const studentData = req.authUser;
 
                 const studentFullName = studentData
                     ? (studentData.first_name || studentData.username || 'مستخدم')
@@ -252,9 +250,9 @@ export default async (req, res) => {
         let isOfflineMode = true;
 
         try {
-            const settingResult = await supabase.from('app_settings').select('value').eq('key', 'offline_mode').single();
-            if (settingResult.data) {
-                isOfflineMode = settingResult.data.value === 'true';
+            const offlineModeValue = await getSetting('offline_mode');
+            if (offlineModeValue !== null && offlineModeValue !== undefined) {
+                isOfflineMode = offlineModeValue === 'true';
             }
 
             // 🟢 المحاولة الأولى: السيرفر الأساسي (Bunny Stream)

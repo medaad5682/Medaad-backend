@@ -1,6 +1,7 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
 import bcrypt from 'bcryptjs';
+import { invalidateUserCaches } from '../../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 export default async (req, res) => {
   // التحقق من الصلاحية (Super Admin فقط)
@@ -119,6 +120,8 @@ export default async (req, res) => {
         await supabase.from('teachers').delete().eq('id', teacher.id);
         throw uError;
       }
+
+      invalidateUserCaches(user_id); // 🗄️ تغيّر الدور (طالب ← مدرس)
 
       return res.status(200).json({ success: true });
 

@@ -1,5 +1,5 @@
 // pages/api/public/check-version.js
-import { supabase } from '../../../lib/supabaseClient';
+import { getAppVersionRow } from '../../../lib/appVersionCache'; // 📱 كاش قصير (التحكم: cacheConfig.js → CACHE_VERSION_TTL_SEC)
 
 export default async function handler(req, res) {
   // السماح فقط بطلبات GET
@@ -17,12 +17,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // جلب البيانات من جدول app_versions
-    const { data, error } = await supabase
-      .from('app_versions')
-      .select('*')
-      .eq('platform', platform)
-      .single();
+    // جلب البيانات من جدول app_versions (🗄️ عبر كاش قصير؛ يُبطَل فوراً عند التعديل من لوحة الأدمن)
+    const { data, error } = await getAppVersionRow(platform);
 
     if (error) {
       // إذا لم يتم العثور على سجل للمنصة

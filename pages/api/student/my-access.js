@@ -1,4 +1,4 @@
-import { supabase } from '../../../lib/supabaseClient';
+import { getAccessRows } from '../../../lib/accessCache'; // 🗄️ صفوف اشتراك الطالب (كاش قصير؛ التحكم: cacheConfig.js)
 import { checkUserAccess } from '../../../lib/authHelper'; // 1. استيراد الحارس
 import { isAccessRowActive } from '../../../lib/accessExpiryHelper'; // ⏳ فحص انتهاء صلاحية الوصول (Feature B)
 
@@ -15,17 +15,14 @@ export default async (req, res) => {
   const userId = req.headers['x-user-id'];
 
   try {
-      // 4. جلب الكورسات المشترك بها (⏳ مع تاريخ الانتهاء)
-      const { data: coursesRaw } = await supabase
-          .from('user_course_access')
-          .select('course_id, granted_at, expires_at')
-          .eq('user_id', userId);
-
-      // 5. جلب المواد المشترك بها (⏳ مع تاريخ الانتهاء)
-      const { data: subjectsRaw } = await supabase
-          .from('user_subject_access')
-          .select('subject_id, granted_at, expires_at')
-          .eq('user_id', userId);
+      // 4 + 5. جلب الكورسات والمواد المشترك بها (⏳ مع تاريخ الانتهاء)
+      // 🗄️ من نفس صفوف الاشتراك المحفوظة (التي يُسخّنها get-app-init-data من الداتابيز دائماً)
+      const { rows, error: rowsError } = await getAccessRows(userId);
+      if (rowsError || !rows) {
+          return res.status(500).json({ error: rowsError?.message || 'Failed to load access' });
+      }
+      const coursesRaw = rows.courses;
+      const subjectsRaw = rows.subjects;
 
       // ⏳ الوصول المنتهي يُعامل كغير موجود في مصفوفات الأرقام (للتوافق مع
       // التطبيقات الحالية التي تستخدم courses/subjects كقوائم أرقام فقط)،

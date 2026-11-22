@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper';
+import { invalidateUserCaches } from '../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 export default async (req, res) => {
   // 1. التحقق من نوع الطلب (DELETE)
@@ -30,6 +31,8 @@ export default async (req, res) => {
       console.error("Supabase Delete Error:", error);
       return res.status(500).json({ error: 'Failed to delete account' });
     }
+
+    invalidateUserCaches(userId); // 🗄️ الحساب اتحذف: نشيله من الكاش فوراً
 
     return res.status(200).json({ success: true, message: 'Account deleted successfully' });
 

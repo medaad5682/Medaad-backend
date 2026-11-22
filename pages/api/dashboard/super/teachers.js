@@ -2,6 +2,7 @@ import { supabase } from '../../../../lib/supabaseClient';
 import { requireSuperAdmin } from '../../../../lib/dashboardHelper';
 import { VALID_BILLING_METHODS } from '../../../../lib/teacherBillingHelper';
 import bcrypt from 'bcryptjs';
+import { invalidateAllAuthCaches } from '../../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 // --- دالة مساعدة للتحقق من حقول طريقة حساب الأرباح (Billing Method) ---
 // ترجع { error } لو في مشكلة، أو { billing_method, custom_percentage, new_student_price,
@@ -399,8 +400,10 @@ export default async (req, res) => {
       const { error } = await supabase.from('teachers').delete().eq('id', id);
       if (error) throw error;
 
+      invalidateAllAuthCaches(); // 🗄️ حذف مدرس يحذف حسابات واشتراكات كثيرة: نبطل الكاش بالكامل
       return res.status(200).json({ success: true });
     } catch (err) {
+      invalidateAllAuthCaches(); // 🗄️ قد يكون الحذف تم جزئياً
       console.error('❌ [DeleteTeacher] Error:', err);
       // خطأ قيد المفتاح الأجنبي (Foreign Key) — رسالة أوضح للأدمن بدل الخطأ الخام
       if (err.code === '23503') {

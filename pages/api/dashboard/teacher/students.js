@@ -4,6 +4,7 @@ import { buildGrantTimestamps, isExemptFromExpiry } from '../../../../lib/access
 import { getTeacherTeamContext, getTeamPackages } from '../../../../lib/teamHelper';
 import { grantPackagesToUsers } from '../../../../lib/grantHelper';
 import { notifyStudentsManualActivation } from '../../../../lib/notifyHelper';
+import { invalidateUserCaches } from '../../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 // 🔒 سعر التقرير (report_price) بيانات مالية داخلية — لا تُرسل لمتصفح المدرس/القائد.
 // نحذفه من الباقة ومن كل كورس بداخلها قبل الإرسال. (منطق المنح في السيرفر
@@ -514,6 +515,7 @@ export default async (req, res) => {
                       ? supabase.from('user_subject_access').delete().in('user_id', targetIds).in('subject_id', wantedSubjects)
                       : Promise.resolve({ error: null })
               ]);
+              invalidateUserCaches(targetIds); // 🗄️ سُحبت صلاحيات: نبطل كاش هؤلاء الطلاب فوراً
               if (courseDel.error || subjectDel.error) throw (courseDel.error || subjectDel.error);
 
               return res.status(200).json({ success: true, message: 'تم سحب الصلاحية.' });

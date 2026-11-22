@@ -2,6 +2,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper'; // 1. الحارس الأساسي (الذي يحتوي الآن على فحص App Check)
 import { serialize } from 'cookie';
 import { CLEAR_PUSH_TOKENS } from '../../../lib/pushRegistration';
+import { invalidateUserCaches } from '../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 export default async (req, res) => {
   // 1. السماح فقط بطلبات POST (ممارسة أمنية أفضل لتسجيل الخروج)
@@ -29,6 +30,8 @@ export default async (req, res) => {
               .update({ jwt_token: null }) // تصفير التوكن
               .eq('id', userId);
               
+          invalidateUserCaches(userId); // 🗄️ إبطال الجلسة في الكاش فوراً
+
           console.log(`✅ User ${userId} logged out and token revoked.`);
 
           // 4.1 إيقاف الإشعارات على هذا الجهاز بعد تسجيل الخروج (FCM + HMS).

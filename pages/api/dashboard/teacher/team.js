@@ -1,5 +1,6 @@
 import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
+import { invalidateUserCaches } from '../../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 export default async (req, res) => {
   const { user, error } = await requireTeacherOrAdmin(req, res);
@@ -47,6 +48,7 @@ export default async (req, res) => {
         await supabase.from('users')
           .update({ role: 'moderator', teacher_profile_id: teacherId })
           .eq('id', targetUserId);
+        invalidateUserCaches(targetUserId); // 🗄️ تغيّر الدور
 
         // منح صلاحيات لكل كورساتي
         const { data: myCourses } = await supabase.from('courses').select('id').eq('teacher_id', teacherId);
@@ -74,6 +76,7 @@ export default async (req, res) => {
 
         // إرجاعه طالب
         await supabase.from('users').update({ role: 'student', teacher_profile_id: null }).eq('id', targetUserId);
+        invalidateUserCaches(targetUserId); // 🗄️ تغيّر الدور + سُحبت صلاحيات الكورسات
         return res.status(200).json({ success: true });
       }
     }

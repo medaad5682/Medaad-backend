@@ -5,6 +5,8 @@ import admin from '../../../lib/firebaseAdmin'; // ✅ إضافة استيراد
 import { verifyClientAttestation } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 import { isAccessRowActive } from '../../../lib/accessExpiryHelper'; // ⏳ فحص انتهاء صلاحية الوصول (Feature B)
 import { buildPushTokenUpdate } from '../../../lib/pushRegistration'; // 🔔 توكن الإشعارات (FCM / HMS)
+import { warmFromInit, getInvalidationSeq } from '../../../lib/accessCache'; // 🗄️ تسخين كاش المستخدم/الاشتراكات (التحكم: cacheConfig.js)
+import { getSettings } from '../../../lib/appSettingsCache'; // ⚙️ كاش الإعدادات (free_mode يُقرأ مباشرة دائماً)
 
 export default async (req, res) => {
   
@@ -66,10 +68,15 @@ export default async (req, res) => {
   try {
     // 2. إذا تم التعرف على المستخدم، نجلب بياناته الخاصة
     if (userId) {
+       // 🗄️ نحفظ رقم تسلسل الإبطال قبل القراءة، حتى لا نسخّن الكاش ببيانات قديمة لو حدث إبطال أثناء القراءة
+       const cacheSeqBefore = getInvalidationSeq();
+       const subjectCourseEntries = []; // [[subjectId, courseId], ...] لتسخين كاش (مادة ← كورس)
+
        // ✅ جلب الصلاحية ورقم بروفايل المعلم
+       // (created_at, is_admin, devices(fingerprint) مضافة لتسخين كاش المستخدم — لا تُرسل للتطبيق)
        const { data: user } = await supabase
           .from('users')
-          .select('id, first_name, username, phone, email, is_blocked, jwt_token, role, teacher_profile_id')
+          .select('id, first_name, username, phone, email, is_blocked, jwt_token, role, teacher_profile_id, created_at, is_admin, devices(fingerprint)')
           .eq('id', userId)
           .single();
 
@@ -167,6 +174,7 @@ export default async (req, res) => {
 
             if (allSubjects) {
                 allSubjects.forEach(sub => {
+                    subjectCourseEntries.push([sub.id, sub.course_id]);
                     if (!courseSubjectsMap[sub.course_id]) {
                         courseSubjectsMap[sub.course_id] = [];
                     }
@@ -200,6 +208,24 @@ export default async (req, res) => {
             .eq('user_id', userId);
 
           const singleSubjects = (singleSubjectsRaw || []).filter(isAccessRowActive);
+
+          // 🗄️ تسخين الكاش من القراءة الطازجة اللي لسه جاية من الداتابيز (داخل فرع المستخدم المتحقق منه فقط):
+          //   - صف المستخدم (للفحوصات التالية بدون قراءة users)
+          //   - صفوف اشتراكه الخام (بما فيها المنتهية؛ الصلاحية تُحسب وقت الفحص)
+          //   - ربط المواد بكورساتها
+          (singleSubjectsRaw || []).forEach(item => {
+            const parentCourseId = item.subjects?.courses?.id;
+            if (item.subject_id !== undefined && parentCourseId !== undefined) {
+              subjectCourseEntries.push([item.subject_id, parentCourseId]);
+            }
+          });
+          warmFromInit({
+            seqBefore: cacheSeqBefore,
+            userRow: user,
+            courseRows: fullCoursesRaw || [],
+            subjectRows: singleSubjectsRaw || [],
+            subjectCourseEntries,
+          });
 
           // هيكلة الصلاحيات (مع قنوات الإشعارات الجديدة)
           userAccess = {
@@ -418,15 +444,9 @@ export default async (req, res) => {
     }
 
     // 4. ✅ (تعديل) جلب إعدادات التواصل + إعدادات الوضع المجاني
-    const { data: settingsData } = await supabase
-      .from('app_settings')
-      .select('key, value')
-      .in('key', ['support_whatsapp', 'support_telegram', 'free_mode']); // 🆕 تم إضافة free_mode
-
-    const contactInfo = {};
-    settingsData?.forEach(item => {
-        contactInfo[item.key] = item.value;
-    });
+    // ⚙️ support_whatsapp / support_telegram من كاش الإعدادات، و free_mode يُقرأ من الداتابيز مباشرة
+    // في كل مرة (غير مسموح كاشه، راجع CACHE_SETTINGS_KEYS في cacheConfig.js)
+    const contactInfo = await getSettings(['support_whatsapp', 'support_telegram', 'free_mode']); // 🆕 تم إضافة free_mode
 
     return res.status(200).json({
       success: true,

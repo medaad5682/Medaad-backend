@@ -26,7 +26,7 @@ export default async function handler(req, res) {
 
     // 🆕 الاستبيان للطلبة فقط، وبشرط أن يكون عمر الحساب 3 أسابيع على الأقل
     // (لا يظهر للمدرسين ولا المشرفين ولا الحسابات الجديدة)
-    const eligibility = await checkSurveyEligibility(userId);
+    const eligibility = await checkSurveyEligibility(userId, req.authUser); // 🗄️ بيانات المستخدم جاهزة من authHelper
     if (!eligibility.eligible) {
       return res.status(200).json({ success: true, survey: null });
     }

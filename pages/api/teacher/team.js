@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper'; // سنستخدم هذا فقط للتحقق من صحة التوكن والجهاز
+import { invalidateUserCaches } from '../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
 export default async (req, res) => {
   // =================================================================
@@ -94,6 +95,7 @@ export default async (req, res) => {
           .eq('id', targetUserId);
 
         if (updateError) throw updateError;
+        invalidateUserCaches(targetUserId); // 🗄️ تغيّر الدور
 
         // 2. جلب جميع كورسات المعلم
         const { data: myCourses } = await supabase
@@ -152,6 +154,7 @@ export default async (req, res) => {
             teacher_profile_id: null 
           })
           .eq('id', targetUserId);
+        invalidateUserCaches(targetUserId); // 🗄️ تغيّر الدور + سُحبت صلاحيات الكورسات
 
         return res.status(200).json({ success: true, message: 'Moderator removed and access revoked' });
       }
