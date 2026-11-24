@@ -96,7 +96,7 @@ export default function ContentManager() {
   // Exam Editor
   const [showExamSidebar, setShowExamSidebar] = useState(false);
   const [examForm, setExamForm] = useState({ id: null, title: '', duration: 30, requiresName: true, randQ: true, randO: true, startTime: '', endTime: '', questions: [], notifyStudents: false, allowRetake: false });
-  const [currentQ, setCurrentQ] = useState({ id: null, text: '', image: null, questionType: 'mcq', maxScore: 1, modelAnswer: '', options: ['', '', '', ''], correctIndex: 0 });
+  const [currentQ, setCurrentQ] = useState({ id: null, text: '', image: null, questionType: 'mcq', maxScore: 1, modelAnswer: '', explanation: '', options: ['', '', '', ''], correctIndex: 0 });
   const [editingQIndex, setEditingQIndex] = useState(-1);
   const [deletedQIds, setDeletedQIds] = useState([]);
   const [uploadingImg, setUploadingImg] = useState(false);
@@ -738,6 +738,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                               questionType: q.question_type === 'essay' ? 'essay' : 'mcq',
                               maxScore: q.max_score || 1,
                               modelAnswer: q.model_answer || '',
+                              explanation: q.explanation || '',
                               options: q.options ? q.options.map(o => o.option_text) : [],
                               correctIndex: q.options ? q.options.findIndex(o => o.is_correct) : 0
                           })) : []
@@ -761,7 +762,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
 });
           }
           setDeletedQIds([]); setEditingQIndex(-1); 
-          setCurrentQ({ id: null, text: '', image: null, questionType: 'mcq', maxScore: 1, modelAnswer: '', options: ['', '', '', ''], correctIndex: 0 });
+          setCurrentQ({ id: null, text: '', image: null, questionType: 'mcq', maxScore: 1, modelAnswer: '', explanation: '', options: ['', '', '', ''], correctIndex: 0 });
       }
       setModalType(type);
   };
@@ -806,7 +807,7 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
   };
   const resetCurrentQuestion = () => {
       setEditingQIndex(-1);
-      setCurrentQ({ id: null, text: '', image: null, questionType: 'mcq', maxScore: 1, modelAnswer: '', options: ['', '', '', ''], correctIndex: 0 });
+      setCurrentQ({ id: null, text: '', image: null, questionType: 'mcq', maxScore: 1, modelAnswer: '', explanation: '', options: ['', '', '', ''], correctIndex: 0 });
   };
   const saveQuestion = () => {
       if (!currentQ.text || !currentQ.text.trim()) return showAlert('error', 'نص السؤال مطلوب');
@@ -1673,6 +1674,19 @@ const fetchMediaViews = async (mediaId, mediaTitle, pageNum = 1) => {
                                       ))}
                                   </div>
                                   <button className="btn-add-opt" onClick={addOption}>+ إضافة خيار</button>
+
+                                  <label className="section-label" style={{marginTop: '15px'}}>شرح الإجابة (اختياري):</label>
+                                  <textarea
+                                      className="input area"
+                                      placeholder="اكتب شرح الإجابة الصحيحة هنا ليراه الطالب بعد انتهاء الامتحان..."
+                                      value={currentQ.explanation || ''}
+                                      onChange={e => setCurrentQ({ ...currentQ, explanation: e.target.value })}
+                                      maxLength={2000}
+                                      rows="3"
+                                  ></textarea>
+                                  <p style={{color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '6px'}}>
+                                      سيظهر هذا الشرح للطالب في شاشة النتيجة ونموذج الإجابة بعد انتهاء الامتحان، ولا يظهر أثناء الحل.
+                                  </p>
                               </div>
                           )}
                           <div className="editor-actions">

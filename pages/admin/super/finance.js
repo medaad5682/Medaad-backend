@@ -311,6 +311,11 @@ export default function SuperFinance() {
 
         const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB').replace(/\//g, '-');
 
+        // 🛡️ تهريب HTML لأي نص حر يُحقن في تقرير الطباعة (user_note يحتوي الآن على سطرين)
+        const escapeHtml = (v) => String(v ?? '')
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
         const safeName = data.teacherName.replace(/\s+/g, '_');
         const fileName = `تقرير_${safeName}_${dateRange.startDate}_${dateRange.endDate}`;
 
@@ -414,6 +419,7 @@ export default function SuperFinance() {
                 .price-paid.approved { color: var(--green); font-weight:800; }
                 .price-paid.rejected { color: var(--red); font-weight:800; }
                 .note-rejected { color: var(--red); font-weight:700; }
+                .user-note-cell { white-space: pre-line; }
 
                 /* ── FOOTER BAR (plain block after the table — renders once,
                    naturally falling on the last printed page) ── */
@@ -588,7 +594,7 @@ export default function SuperFinance() {
                         <td class="price-paid ${req.status}">${fmt(act)} ج.م</td>
                         <td><span class="status-pill ${req.status}">${req.status === 'approved' ? '✅ مقبول' : '❌ مرفوض'}</span></td>
                         ${commissionDetailCell}
-                        <td class="${isRejected ? 'note-rejected' : ''}">${req.user_note || '—'}</td>
+                        <td class="user-note-cell ${isRejected ? 'note-rejected' : ''}">${req.user_note ? escapeHtml(req.user_note) : '—'}</td>
                       </tr>
                       `;
                     }).join('')}

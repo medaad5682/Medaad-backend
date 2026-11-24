@@ -133,7 +133,7 @@ export default async (req, res) => {
         // جلب الأسئلة مع الإجابات الصحيحة (is_correct)
         const { data: questionsWithAnswers, error: qAnsError } = await supabase.from('questions')
           .select(`
-             id, question_text, sort_order, image_file_id, question_type, max_score, model_answer,
+             id, question_text, sort_order, image_file_id, question_type, max_score, model_answer, explanation,
              options ( id, question_id, option_text, sort_order, is_correct )
           `)
           .eq('exam_id', examId)

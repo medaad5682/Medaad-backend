@@ -37,7 +37,7 @@ export default async (req, res) => {
         // جلب الأسئلة مع كافة تفاصيلها (الخيارات، الصور، النص) للإرسال للفرونت إند
         const { data: questions, error: qErr } = await supabase
           .from('questions')
-          .select(`id, question_text, image_file_id, question_type, max_score, model_answer, options (id, option_text, is_correct)`)
+          .select(`id, question_text, image_file_id, question_type, max_score, model_answer, explanation, options (id, option_text, is_correct)`)
           .eq('exam_id', examId);
 
         if (qErr) throw qErr;
@@ -92,6 +92,8 @@ export default async (req, res) => {
             question_type: 'mcq',
             options: q.options,
             correct_option_id: correctOption?.id,
+            // ✅ شرح الإجابة (اختياري) - يظهر في وضع التدريب بعد التسليم فقط
+            explanation: q.explanation || null,
             user_answer: { selected_option_id: userSelectedOptionId, is_correct: isCorrect }
           });
         });

@@ -5,11 +5,12 @@ import { BASE_URL } from '../../../lib/config'; // ✅ 1. استيراد ملف 
 import admin from '../../../lib/firebaseAdmin'; // ✅ إضافة استيراد فايربيز آدمن للتحقق
 import { verifyClientAttestation } from '../../../lib/clientAttestation'; // 🆕 App Check / هواوي / القائمة البيضاء
 import { invalidateUserCaches } from '../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
+import { sanitizeDeviceInfo } from '../../../lib/deviceInfo'; // 📱 تفاصيل جهاز المستخدم
 
 export default async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ message: 'Method Not Allowed' });
 
-  const { identifier, password, deviceId } = req.body;
+  const { identifier, password, deviceId, deviceInfo } = req.body;
 
   try {
     // 0. البحث المبكر عن المستخدم (قبل بوابة App Check) حتى نستطيع مطابقة
@@ -104,6 +105,13 @@ export default async (req, res) => {
       .eq('user_id', user.id)
       .maybeSingle();
 
+    // 📱 تفاصيل الجهاز (الشركة المصنعة، الموديل، رقم البناء ...) بعد التنظيف
+    //    null لو التطبيق قديم ولم يرسلها => لا نكتب فوق المحفوظ
+    const cleanDeviceInfo = sanitizeDeviceInfo(deviceInfo, {
+      fingerprint: deviceId,
+      userAgent: req.headers['user-agent'],
+    });
+
     if (deviceData) {
       // إذا كان الجهاز مسجلاً مسبقاً، يجب أن يتطابق
       if (deviceData.fingerprint !== deviceId) {
@@ -113,11 +121,25 @@ export default async (req, res) => {
         });
       }
     } else {
-      // تسجيل الجهاز لأول مرة
+      // تسجيل الجهاز لأول مرة (بدون device_info عمداً: لو العمود لسه مش متضاف
+      // ما نكسرش قفل الجهاز - التفاصيل بتتحفظ في خطوة منفصلة تحت)
       await supabase.from('devices').insert({ 
         user_id: user.id, 
         fingerprint: deviceId 
       });
+    }
+
+    // 📱 حفظ/تحديث تفاصيل الجهاز (best-effort: أي فشل لا يمنع تسجيل الدخول)
+    if (cleanDeviceInfo) {
+      try {
+        const { error: infoError } = await supabase
+          .from('devices')
+          .update({ device_info: cleanDeviceInfo })
+          .eq('user_id', user.id);
+        if (infoError) console.warn('⚠️ [Login] تعذر حفظ device_info:', infoError.message);
+      } catch (infoErr) {
+        console.warn('⚠️ [Login] تعذر حفظ device_info:', infoErr?.message || infoErr);
+      }
     }
 
     // 6. ✅ جلب صورة المدرس ومعالجة الرابط

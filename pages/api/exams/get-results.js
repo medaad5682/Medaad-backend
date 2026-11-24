@@ -51,7 +51,7 @@ export default async (req, res) => {
 
     // 5. جلب الأسئلة والإجابات
     const { data: questions } = await supabase.from('questions')
-      .select(`id, question_text, image_file_id, question_type, max_score, model_answer, options ( id, option_text, is_correct )`)
+      .select(`id, question_text, image_file_id, question_type, max_score, model_answer, explanation, options ( id, option_text, is_correct )`)
       .eq('exam_id', attempt.exam_id);
 
     const { data: userAnswers } = await supabase.from('user_answers')

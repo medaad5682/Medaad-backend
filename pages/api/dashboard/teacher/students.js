@@ -3,6 +3,7 @@ import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { buildGrantTimestamps, isExemptFromExpiry } from '../../../../lib/accessExpiryHelper';
 import { getTeacherTeamContext, getTeamPackages } from '../../../../lib/teamHelper';
 import { grantPackagesToUsers } from '../../../../lib/grantHelper';
+import { buildManualActivationNote } from '../../../../lib/manualActivationNote'; // 📝 ملاحظة المدرس عند التفعيل
 import { notifyStudentsManualActivation } from '../../../../lib/notifyHelper';
 import { invalidateUserCaches } from '../../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
@@ -283,7 +284,7 @@ export default async (req, res) => {
   // 3. معالجة طلبات POST (الإجراءات)
   // ---------------------------------------------------------
   if (req.method === 'POST') {
-      const { action, userIds, userId, grantList } = req.body || {};
+      const { action, userIds, userId, grantList, teacherNote } = req.body || {};
 
       // 🔒 المسموح فقط: منح الصلاحيات وسحبها (لا تعديل لبيانات الطلاب ولا حظر)
       if (action !== 'grant_access' && action !== 'revoke_access') {
@@ -308,6 +309,10 @@ export default async (req, res) => {
           // -- أ) منح صلاحيات (Grant) مع التحقق من التكرار --
           if (action === 'grant_access') {
               const { courses = [], subjects = [], packages = [] } = grantList || {};
+
+              // 📝 نص خانة "ملاحظات الطالب" يُبنى مرة واحدة ويُستخدم للكورسات والمواد والباقات
+              const activationNote = buildManualActivationNote('تم التفعيل يدوياً من قائمة الطلاب', teacherNote);
+              const packageActivationNote = buildManualActivationNote('تم تفعيل باقة يدوياً من قائمة الطلاب', teacherNote);
               
               // 🔒 فلترة البيانات القادمة من الفرونت إند لضمان أنها تخص هذا المدرس فقط
               let safeCourses = courses.filter(id => myCourseIds.includes(Number(id)) || myCourseIds.includes(String(id)));
@@ -415,7 +420,7 @@ export default async (req, res) => {
                                   id: cid, type: 'course', title: cInfo.title, price: cInfo.price || 0,
                                   owner_teacher_id: cInfo.teacher_id ?? null
                               }],
-                              user_note: 'تم التفعيل يدوياً من قائمة الطلاب'
+                              user_note: activationNote
                           });
                       }
                       const { granted_at, expires_at } = courseGrantTimestamps[cid] || {};
@@ -443,7 +448,7 @@ export default async (req, res) => {
                                   id: sid, type: 'subject', title: title, price: sInfo.price || 0,
                                   owner_teacher_id: sInfo.courses?.teacher_id ?? null
                               }],
-                              user_note: 'تم التفعيل يدوياً من قائمة الطلاب'
+                              user_note: activationNote
                           });
                       }
                       const { granted_at, expires_at } = subjectGrantTimestamps[sid] || {};
@@ -467,6 +472,7 @@ export default async (req, res) => {
                       packages: chosenPackages,
                       billingTeacherId,
                       usersData: usersData || [],
+                      userNote: packageActivationNote,
                   });
               }
 

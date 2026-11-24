@@ -2,6 +2,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import { verifyTeacher } from '../../../lib/teacherAuth';
 import { notifyStudentSubscriptionDecision, notifyStudentsManualActivation } from '../../../lib/notifyHelper';
 import { buildGrantTimestamps, isExemptFromExpiry } from '../../../lib/accessExpiryHelper';
+import { buildManualActivationNote } from '../../../lib/manualActivationNote'; // 📝 ملاحظة المدرس عند التفعيل
 
 export default async (req, res) => {
   // 1. التحقق من صلاحية المعلم
@@ -249,7 +250,7 @@ export default async (req, res) => {
 
       // 2️⃣ التحكم المباشر (Manage Access)
       if (action === 'manage_access') {
-         const { studentId, type, itemId, allow } = payload;
+         const { studentId, type, itemId, allow, note } = payload;
          
          // أ) التحقق من الملكية وجلب تفاصيل السعر والعنوان
          let isOwner = false;
@@ -312,7 +313,8 @@ export default async (req, res) => {
                         title: contentTitle,
                         price: contentPrice
                     }],
-                    user_note: 'تم التفعيل يدوياً بواسطة المعلم من لوحة التحكم'
+                    // 📝 ملاحظة المدرس الاختيارية (payload.note) تُضاف في سطر ثانٍ
+                    user_note: buildManualActivationNote('تم التفعيل يدوياً بواسطة المعلم من لوحة التحكم', note)
                 });
             }
 

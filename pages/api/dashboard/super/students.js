@@ -63,11 +63,36 @@ export default async function handler(req, res) {
             return !isOwned && !isParentCourseOwned;
         });
 
+        // 5. 📱 بيانات الجهاز المرتبط (البصمة + التفاصيل اللي سجلها التطبيق عند الدخول)
+        //    لو عمود device_info لسه مش متضاف (قبل تشغيل الـ migration) نرجع للبصمة فقط.
+        let device = null;
+        {
+          let devRes = await supabase
+            .from('devices')
+            .select('fingerprint, device_info')
+            .eq('user_id', get_details_for_user)
+            .maybeSingle();
+          if (devRes.error) {
+            devRes = await supabase
+              .from('devices')
+              .select('fingerprint')
+              .eq('user_id', get_details_for_user)
+              .maybeSingle();
+          }
+          if (devRes.data) {
+            device = {
+              fingerprint: devRes.data.fingerprint,
+              info: devRes.data.device_info || null
+            };
+          }
+        }
+
         return res.status(200).json({
           courses: userCourses || [],
           subjects: userSubjects || [],
           available_courses: availableCourses, // القائمة المتوافقة مع الـ Select في الفرونت
-          available_subjects: availableSubjects
+          available_subjects: availableSubjects,
+          device
         });
 
       } catch (err) {

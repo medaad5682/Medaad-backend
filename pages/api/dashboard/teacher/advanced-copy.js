@@ -301,7 +301,8 @@ export default async function handler(req, res) {
                           sort_order: oldQ.sort_order,
                           question_type: questionType,
                           max_score: questionType === 'essay' ? (oldQ.max_score || 1) : 1,
-                          model_answer: questionType === 'essay' ? (oldQ.model_answer || null) : null
+                          model_answer: questionType === 'essay' ? (oldQ.model_answer || null) : null,
+                          explanation: questionType === 'mcq' ? (oldQ.explanation || null) : null
                       }).select().single();
 
                       // ✅ الخيارات تُنسخ فقط للأسئلة الاختيارية - الأسئلة المقالية لا تحتاج جدول options
@@ -485,7 +486,8 @@ export default async function handler(req, res) {
                           sort_order: oldQ.sort_order,
                           question_type: questionType,
                           max_score: questionType === 'essay' ? (oldQ.max_score || 1) : 1,
-                          model_answer: questionType === 'essay' ? (oldQ.model_answer || null) : null
+                          model_answer: questionType === 'essay' ? (oldQ.model_answer || null) : null,
+                          explanation: questionType === 'mcq' ? (oldQ.explanation || null) : null
                       }).select().single();
 
                       // ✅ الخيارات تُنسخ فقط للأسئلة الاختيارية - الأسئلة المقالية لا تحتاج جدول options

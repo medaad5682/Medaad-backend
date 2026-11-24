@@ -2,6 +2,7 @@ import { supabase } from '../../../../lib/supabaseClient';
 import { requireTeacherOrAdmin } from '../../../../lib/dashboardHelper';
 import { checkTeacherPermission } from '../../../../lib/teacherPermissions'; // ✅ التحقق من صلاحيات المعلم
 import { sendToTopicOrThrow } from '../../../../lib/pushService'; // ✅ إرسال الإشعارات (FCM + HMS)
+import { normalizeExplanation } from '../../../../lib/examExplanation'; // ✅ شرح اختياري لأسئلة MCQ
 
 export default async (req, res) => {
   // 1. التحقق من الصلاحية
@@ -219,6 +220,8 @@ export default async (req, res) => {
                     max_score: questionType === 'essay' ? (parseFloat(q.maxScore) || 1) : 1,
                     // ✅ الإجابة النموذجية: تُحفظ فقط للأسئلة المقالية، ليراها الطالب في النتيجة/المراجعة
                     model_answer: questionType === 'essay' ? (q.modelAnswer || null) : null,
+                    // ✅ شرح الإجابة (اختياري): يُحفظ فقط للأسئلة الاختيارية
+                    explanation: questionType === 'mcq' ? normalizeExplanation(q.explanation) : null,
                 }).select().single();
 
                 if (qErr) throw qErr;

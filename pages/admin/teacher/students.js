@@ -67,6 +67,7 @@ export default function StudentsPage() {
   const [showGrantModal, setShowGrantModal] = useState(false);
   const [grantTarget, setGrantTarget] = useState(null);
   const [selectedGrantItems, setSelectedGrantItems] = useState({ courses: [], subjects: [], packages: [] });
+  const [grantNote, setGrantNote] = useState(''); // 📝 ملاحظة المدرس الاختيارية (تُحفظ في خانة ملاحظات الطلب)
   // 👑 حالة الفتح/الغلق في نافذة المنح للقائد (افتراضياً كل شيء مغلق)
   const [openPackages, setOpenPackages] = useState({});   // { [packageId]: true }
   const [openCourseCards, setOpenCourseCards] = useState({}); // { ['pkgId:courseId' | 'free:courseId']: true }
@@ -213,6 +214,7 @@ export default function StudentsPage() {
   const openGrantModal = (target) => {
       setGrantTarget(target);
       setSelectedGrantItems({ courses: [], subjects: [], packages: [] });
+      setGrantNote('');
       setOpenPackages({});
       setOpenCourseCards({});
       setShowGrantModal(true);
@@ -227,7 +229,7 @@ export default function StudentsPage() {
           return showToast("اختر شيئاً واحداً على الأقل", 'error');
       }
       const isBulk = grantTarget === 'bulk';
-      runApiCall('grant_access', { userIds: isBulk ? selectedUsers : [grantTarget.id], grantList: selectedGrantItems }, false);
+      runApiCall('grant_access', { userIds: isBulk ? selectedUsers : [grantTarget.id], grantList: selectedGrantItems, teacherNote: grantNote.trim() }, false);
       setShowGrantModal(false);
   };
 
@@ -742,6 +744,19 @@ export default function StudentsPage() {
                           </>
                       )}
                   </div>
+                  <div className="grant-note-box">
+                      <label className="grant-note-label" htmlFor="grant-note">ملاحظة المدرس (اختياري)</label>
+                      <textarea
+                          id="grant-note"
+                          className="grant-note-input"
+                          rows={2}
+                          maxLength={200}
+                          value={grantNote}
+                          onChange={e => setGrantNote(e.target.value)}
+                          placeholder="مثال: دفع كاش للمدرس"
+                      />
+                      <span className="grant-note-count">{grantNote.length}/200</span>
+                  </div>
                   <div className="modal-footer"><button className="cancel-btn" onClick={() => setShowGrantModal(false)}>إلغاء</button><button className="confirm-btn" onClick={submitGrant}>تأكيد ✅</button></div>
               </div>
           </div>
@@ -846,6 +861,11 @@ export default function StudentsPage() {
         .close-icon:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
 
         .modal-content { padding: 25px; overflow-y: auto; flex: 1; }
+        .grant-note-box { padding: 12px 25px 0; background: var(--bg-elevated); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+        .grant-note-label { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
+        .grant-note-input { width: 100%; box-sizing: border-box; resize: vertical; min-height: 56px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); font-family: inherit; font-size: 0.9rem; outline: none; transition: 0.2s; }
+        .grant-note-input:focus { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-dim); }
+        .grant-note-count { align-self: flex-end; font-size: 0.75rem; color: var(--text-muted); }
         .modal-footer { padding: 18px 25px; background: var(--bg-elevated); display: flex; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border); }
 
         /* Grid Layout for Courses/Subjects */

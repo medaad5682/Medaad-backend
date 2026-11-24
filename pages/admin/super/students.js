@@ -18,6 +18,87 @@ const StudentsIcon = () => (
   </svg>
 );
 
+// ==========================================================
+// 📱 نظام الجهاز (iOS / Android) + تنسيق تفاصيل الجهاز
+// ==========================================================
+// بصمة الآيفون دايماً بتبدأ بـ ios، أما الأندرويد فمالوش بادئة ثابتة
+// => أي بصمة مش بتبدأ بـ ios تعتبر أندرويد.
+const getPlatform = (fingerprint) => {
+  const f = String(fingerprint || '').toLowerCase();
+  if (!f) return null;
+  return f.startsWith('ios') ? 'ios' : 'android';
+};
+
+const PLATFORM_UI = {
+  ios: { emoji: '🍎', label: 'iOS' },
+  android: { emoji: '🤖', label: 'Android' },
+};
+
+const formatSizeMb = (mb) => {
+  const n = Number(mb);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} GB` : `${Math.round(n)} MB`;
+};
+
+const formatDeviceValue = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'boolean') return v ? 'نعم' : 'لا';
+  if (Array.isArray(v)) return v.length ? v.join(', ') : null;
+  if (typeof v === 'object') return null;
+  return String(v);
+};
+
+// يحوّل device_info إلى صفوف (label/value) مرتبة بالعربي
+const buildDeviceRows = (device) => {
+  if (!device) return [];
+  const info = device.info || {};
+  // المنصة المسجلة من التطبيق (لو موجودة) أدق من البادئة، وإلا نعتمد على بصمة الجهاز
+  const platform = info.platform || getPlatform(device.fingerprint);
+  const ui = PLATFORM_UI[platform] || PLATFORM_UI.android;
+  const rows = [{ label: 'نظام التشغيل', value: `${ui.emoji} ${ui.label}`, plain: true }];
+
+  const add = (label, value) => {
+    const f = formatDeviceValue(value);
+    if (f !== null) rows.push({ label, value: f });
+  };
+
+  add('الشركة المصنعة', info.manufacturer);
+  if (info.brand && info.brand !== info.manufacturer) add('العلامة التجارية', info.brand);
+  add('الموديل', info.model);
+  add('اسم الموديل', info.model_name);
+  add('اسم الجهاز', info.name);
+  add('الاسم الكودي (Device)', info.device);
+  add('المنتج (Product)', info.product);
+  add('اللوحة (Board)', info.board);
+  add('العتاد (Hardware)', info.hardware);
+  add('المعرّف الداخلي (iOS)', info.machine);
+  add('إصدار النظام', info.os_version);
+  add('مستوى الـ API (SDK)', info.sdk_int);
+  add('تحديث الأمان', info.security_patch);
+  add('رقم البناء (Build ID)', info.build_id);
+  add('رقم البناء التراكمي', info.incremental);
+  add('سلسلة البناء (Display)', info.display);
+  add('بصمة البناء (Fingerprint)', info.build_fingerprint);
+  add('Bootloader', info.bootloader);
+  add('Kernel', [info.kernel_sysname, info.kernel_release].filter(Boolean).join(' '));
+  add('Kernel Version', info.kernel_version);
+  add('معماريات المعالج (ABIs)', info.abis);
+  add('الذاكرة (RAM)', formatSizeMb(info.ram_mb));
+  add('مساحة التخزين', formatSizeMb(info.total_disk_mb));
+  add('جهاز حقيقي؟', info.is_physical_device);
+  add('ذاكرة منخفضة؟', info.is_low_ram_device);
+  if (info.screen && typeof info.screen === 'object') {
+    const { width_px, height_px, pixel_ratio } = info.screen;
+    if (width_px && height_px) add('الشاشة', `${width_px}×${height_px}${pixel_ratio ? ` (×${pixel_ratio})` : ''}`);
+  }
+  add('لغة الجهاز', info.locale);
+  add('المنطقة الزمنية', info.timezone);
+  if (info.app_version) add('إصدار التطبيق', `${info.app_version}${info.app_build ? ` (${info.app_build})` : ''}`);
+  add('آخر تسجيل للتفاصيل', info.server?.collected_at ? new Date(info.server.collected_at).toLocaleString('ar-EG') : null);
+  rows.push({ label: 'بصمة الجهاز (Device ID)', value: device.fingerprint || '-' });
+  return rows;
+};
+
 export default function SuperStudentsPage() {
   const [students, setStudents] = useState([]);
   const [allCourses, setAllCourses] = useState([]); 
@@ -133,6 +214,7 @@ export default function SuperStudentsPage() {
           password: '' 
       });
       
+      setUserSubs({ courses: [], subjects: [], device: null });
       setLoadingSubs(true);
       try {
           const res = await fetch(`/api/dashboard/super/students?get_details_for_user=${user.id}`);
@@ -161,6 +243,10 @@ export default function SuperStudentsPage() {
                   if (viewUser) {
                       if (action === 'update_profile') {
                           setViewUser({ ...viewUser, ...payload.data });
+                      }
+                      if (action === 'reset_device') {
+                          setViewUser({ ...viewUser, device_id: null });
+                          setUserSubs(prev => ({ ...prev, device: null }));
                       }
                       if (['grant_access', 'revoke_access'].includes(action)) {
                            const subRes = await fetch(`/api/dashboard/super/students?get_details_for_user=${viewUser.id}`);
@@ -357,7 +443,7 @@ export default function SuperStudentsPage() {
                             <td style={{textAlign:'center', direction:'ltr', fontFamily:'monospace', color:'var(--text-secondary)'}}>{std.phone}</td>
                             <td style={{textAlign:'center', direction:'ltr', fontFamily:'monospace', fontSize:'0.85em', color:'var(--text-secondary)'}}>{std.email || '-'}</td>
                             <td style={{textAlign:'center'}}>
-                                {std.device_id ? <span title={std.device_id} className="device-badge used">📱 مرتبط</span> : <span className="device-badge free">⚪ فارغ</span>}
+                                {std.device_id ? (() => { const pk = getPlatform(std.device_id); const pu = PLATFORM_UI[pk]; return <span title={std.device_id} className={`device-badge used ${pk}`}>{pu.emoji} {pu.label}</span>; })() : <span className="device-badge free">⚪ فارغ</span>}
                             </td>
                             <td style={{textAlign:'center'}}>
                                 {std.is_blocked ? 
@@ -506,7 +592,7 @@ export default function SuperStudentsPage() {
                                       <input className="input-field ltr" type="password" placeholder="اتركها فارغة لعدم التغيير" value={editFormData.password} onChange={e => setEditFormData({...editFormData, password: e.target.value})} />
                                   ) : (
                                       <div className="val-box">
-                                          {viewUser.device_id ? <span style={{color:'#facc15', fontWeight:'bold'}}>📱 مرتبط بجهاز</span> : <span style={{color:'#4ade80', fontWeight:'bold'}}>⚪ غير مرتبط</span>}
+                                          {viewUser.device_id ? <span style={{color:'#facc15', fontWeight:'bold'}}>{PLATFORM_UI[getPlatform(viewUser.device_id)].emoji} مرتبط بجهاز {PLATFORM_UI[getPlatform(viewUser.device_id)].label}</span> : <span style={{color:'#4ade80', fontWeight:'bold'}}>⚪ غير مرتبط</span>}
                                       </div>
                                   )}
                               </div>
@@ -522,6 +608,37 @@ export default function SuperStudentsPage() {
                                   )}
                               </div>
                           </div>
+
+                          {viewUser.device_id && (
+                              <div className="device-details">
+                                  <div className="device-details-title">📱 تفاصيل الجهاز</div>
+                                  {loadingSubs ? (
+                                      <div className="device-empty">جاري التحميل...</div>
+                                  ) : (
+                                      <>
+                                          {!userSubs.device?.info && (
+                                              <div className="device-empty">
+                                                  لا توجد تفاصيل مسجلة لهذا الجهاز بعد. تُسجَّل تلقائياً عند تسجيل الدخول من الإصدار الجديد للتطبيق.
+                                              </div>
+                                          )}
+                                          <div className="device-grid">
+                                              {buildDeviceRows(userSubs.device || { fingerprint: viewUser.device_id, info: null }).map((row, i) => (
+                                                  <div className="dev-item" key={i}>
+                                                      <span className="dev-label">{row.label}</span>
+                                                      <span className={`dev-value ${row.plain ? '' : 'ltr'}`}>{row.value}</span>
+                                                  </div>
+                                              ))}
+                                          </div>
+                                          {userSubs.device?.info && (
+                                              <details className="device-raw">
+                                                  <summary>عرض كل البيانات الخام (JSON)</summary>
+                                                  <pre>{JSON.stringify(userSubs.device.info, null, 2)}</pre>
+                                              </details>
+                                          )}
+                                      </>
+                                  )}
+                              </div>
+                          )}
 
                           {isEditing && (
                               <div className="save-actions-row">
@@ -682,6 +799,21 @@ export default function SuperStudentsPage() {
         .device-badge { padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; display: inline-block; border: 1px solid transparent; }
         .device-badge.used { background: rgba(56, 189, 248, 0.1); color: #38bdf8; border-color: rgba(56, 189, 248, 0.2); }
         .device-badge.free { color: var(--text-muted); background: var(--bg-elevated); border-color: var(--border); }
+        .device-badge.ios { background: rgba(226, 232, 240, 0.08); color: #e2e8f0; border-color: rgba(226, 232, 240, 0.25); }
+        .device-badge.android { background: rgba(34, 197, 94, 0.1); color: #4ade80; border-color: rgba(34, 197, 94, 0.25); }
+
+        .device-details { margin-top: 6px; padding: 16px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; }
+        .device-details-title { font-weight: 800; color: var(--gold); margin-bottom: 12px; font-size: 0.95rem; }
+        .device-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .dev-item { display: flex; flex-direction: column; gap: 4px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; min-width: 0; }
+        .dev-label { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; }
+        .dev-value { color: var(--text-primary); font-weight: 600; font-size: 0.88rem; word-break: break-all; }
+        .dev-value.ltr { direction: ltr; text-align: left; font-family: monospace; }
+        .device-empty { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 12px; line-height: 1.6; }
+        .device-raw { margin-top: 12px; }
+        .device-raw summary { cursor: pointer; color: var(--text-secondary); font-size: 0.82rem; font-weight: 600; }
+        .device-raw pre { direction: ltr; text-align: left; max-height: 240px; overflow: auto; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 8px; font-size: 0.75rem; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; }
+        @media (max-width: 640px) { .device-grid { grid-template-columns: 1fr; } }
 
         input[type="checkbox"] { accent-color: var(--gold); width: 18px; height: 18px; cursor: pointer; }
 
