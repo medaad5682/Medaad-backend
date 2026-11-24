@@ -27,6 +27,72 @@ export default async function handler(req, res) {
     const { page = 1, limit = 30, search, courses_filter, subjects_filter, filter_mode = 'or', get_details_for_user } = req.query;
 
     // ---------------------------------------------------------
+    // 📦 0. كتالوج نافذة المنح: الفرق ← الباقات (بكورساتها) + المدرسين ← الكورسات (بمواد كل كورس)
+    //    يُطلب مرة واحدة عند فتح نافذة المنح، ولا يعتمد على طالب بعينه
+    //    (الفلترة بالمملوك للطالب تتم في الفرونت إند من get_details_for_user).
+    // ---------------------------------------------------------
+    if (req.query.grant_catalog) {
+      try {
+        const [teamsRes, teachersRes, coursesRes, subjectsRes, packagesRes] = await Promise.all([
+          supabase.from('teacher_teams').select('id, name').order('name'),
+          supabase.from('teachers').select('id, name, team_id').order('name'),
+          supabase.from('courses').select('id, title, teacher_id, price').order('id'),
+          supabase.from('subjects').select('id, title, course_id').order('id'),
+          supabase.from('course_packages').select('id, team_id, title, price, created_at').eq('is_active', true).order('created_at', { ascending: false })
+        ]);
+        const firstError = teamsRes.error || teachersRes.error || coursesRes.error || subjectsRes.error || packagesRes.error;
+        if (firstError) throw firstError;
+
+        const packageIds = (packagesRes.data || []).map(p => p.id);
+        let items = [];
+        if (packageIds.length > 0) {
+          const { data: itemsData, error: itemsError } = await supabase
+            .from('course_package_items')
+            .select('package_id, course_id')
+            .in('package_id', packageIds);
+          if (itemsError) throw itemsError;
+          items = itemsData || [];
+        }
+
+        const subjectsByCourse = new Map();
+        for (const s of (subjectsRes.data || [])) {
+          if (!subjectsByCourse.has(s.course_id)) subjectsByCourse.set(s.course_id, []);
+          subjectsByCourse.get(s.course_id).push({ id: s.id, title: s.title });
+        }
+
+        const courses = (coursesRes.data || []).map(c => ({
+          id: c.id,
+          title: c.title,
+          teacher_id: c.teacher_id,
+          price: c.price,
+          subjects: subjectsByCourse.get(c.id) || []
+        }));
+        const courseById = new Map(courses.map(c => [c.id, c]));
+
+        const packages = (packagesRes.data || []).map(pkg => {
+          const pkgCourses = items
+            .filter(i => i.package_id === pkg.id)
+            .map(i => courseById.get(i.course_id))
+            .filter(Boolean)
+            .map(c => ({ id: c.id, title: c.title, teacher_id: c.teacher_id }));
+          // السعر: سعر الباقة لو محدد، وإلا مجموع أسعار كورساتها (نفس قاعدة لوحة القائد)
+          const price = pkg.price ?? pkgCourses.reduce((sum, c) => sum + (Number(courseById.get(c.id)?.price) || 0), 0);
+          return { id: pkg.id, team_id: pkg.team_id, title: pkg.title, price, courses: pkgCourses };
+        });
+
+        return res.status(200).json({
+          teams: teamsRes.data || [],
+          teachers: teachersRes.data || [],
+          courses,
+          packages
+        });
+      } catch (err) {
+        console.error('Grant catalog error:', err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // ---------------------------------------------------------
     // A. جلب تفاصيل مستخدم محدد (للمودال - عرض الاشتراكات + قوائم المنح)
     // ---------------------------------------------------------
     if (get_details_for_user) {
@@ -250,7 +316,38 @@ export default async function handler(req, res) {
 
         // 5. منح صلاحيات (Grant Access)
         case 'grant_access':
-          const { courses: gCourses, subjects: gSubjects } = grantList || {};
+          const { courses: gCoursesRaw, subjects: gSubjects, packages: gPackages } = grantList || {};
+
+          // 📦 الباقة تُمنح كاملة = منح كل كورساتها (الباقات النشطة فقط). نجمعها مع الكورسات المختارة بدون تكرار.
+          const gCourses = [...(Array.isArray(gCoursesRaw) ? gCoursesRaw : [])];
+          const explicitCourseIds = new Set(gCourses.map(String)); // اختيارات المدير الصريحة (تُمنح/تُجدد كما كانت دائماً)
+          const packageOnlyCourseIds = new Set();              // كورسات جاءت من الباقات فقط
+          if (Array.isArray(gPackages) && gPackages.length > 0) {
+            const { data: activePackages, error: activePackagesError } = await supabase
+              .from('course_packages')
+              .select('id')
+              .in('id', gPackages)
+              .eq('is_active', true);
+            if (activePackagesError) throw activePackagesError;
+
+            const activePackageIds = (activePackages || []).map(p => p.id);
+            if (activePackageIds.length > 0) {
+              const { data: packageItems, error: packageItemsError } = await supabase
+                .from('course_package_items')
+                .select('course_id')
+                .in('package_id', activePackageIds);
+              if (packageItemsError) throw packageItemsError;
+
+              const alreadyIn = new Set(gCourses.map(String));
+              for (const item of (packageItems || [])) {
+                if (!alreadyIn.has(String(item.course_id))) {
+                  alreadyIn.add(String(item.course_id));
+                  gCourses.push(item.course_id);
+                  packageOnlyCourseIds.add(String(item.course_id));
+                }
+              }
+            }
+          }
 
           // 🎓 لا نُعفي من انتهاء الصلاحية إلا مدرساً/مشرفاً يُمنح وصولاً
           // لكورس/مادة يملكها هو تحديداً (كورساته الخاصة)، وليس أي كورس آخر.
@@ -318,8 +415,24 @@ export default async function handler(req, res) {
             });
           }
 
-          if (courseInserts.length > 0) {
-              await supabase.from('user_course_access').upsert(courseInserts, { onConflict: 'user_id,course_id' });
+          // 📦 كورسات الباقة التي يملكها الطالب بالفعل لا نلمسها (حتى لا يُعاد ضبط تاريخ منحه/انتهائه) —
+          // نفس قاعدة grantPackagesToUsers. الكورسات المختارة صراحةً تتصرف كما كانت.
+          let finalCourseInserts = courseInserts;
+          if (packageOnlyCourseIds.size > 0 && courseInserts.length > 0) {
+              const { data: ownedRows, error: ownedErr } = await supabase
+                  .from('user_course_access')
+                  .select('user_id, course_id')
+                  .in('user_id', targetIds)
+                  .in('course_id', [...packageOnlyCourseIds].map(Number));
+              if (ownedErr) throw ownedErr;
+              const ownedKeys = new Set((ownedRows || []).map(r => `${r.user_id}:${r.course_id}`));
+              finalCourseInserts = courseInserts.filter(row =>
+                  explicitCourseIds.has(String(row.course_id)) || !ownedKeys.has(`${row.user_id}:${row.course_id}`)
+              );
+          }
+
+          if (finalCourseInserts.length > 0) {
+              await supabase.from('user_course_access').upsert(finalCourseInserts, { onConflict: 'user_id,course_id' });
           }
           if (subjectInserts.length > 0) {
               await supabase.from('user_subject_access').upsert(subjectInserts, { onConflict: 'user_id,subject_id' });
