@@ -221,8 +221,19 @@ export default function StudentsPage() {
   };
   const toggleGrantItem = (type, id) => {
       const list = selectedGrantItems[type];
-      const newList = list.includes(id) ? list.filter(x => x !== id) : [...list, id];
-      setSelectedGrantItems({ ...selectedGrantItems, [type]: newList });
+      const adding = !list.includes(id);
+      const newList = adding ? [...list, id] : list.filter(x => x !== id);
+      const next = { ...selectedGrantItems, [type]: newList };
+
+      // 🛡️ اختيار الكورس يغطي كل مواده: نشيل أي مادة تابعة له كانت مختارة،
+      // فيُسجَّل في طلب الاشتراك الكورس الأب فقط (السيرفر يطبّق نفس القاعدة).
+      if (type === 'courses' && adding) {
+          const course = courseTree.find(c => String(c.id) === String(id));
+          const childIds = new Set((course?.subjects || []).map(s => String(s.id)));
+          if (childIds.size > 0) next.subjects = next.subjects.filter(sid => !childIds.has(String(sid)));
+      }
+
+      setSelectedGrantItems(next);
   };
   const submitGrant = () => {
       if (!selectedGrantItems.courses.length && !selectedGrantItems.subjects.length && !selectedGrantItems.packages.length) {

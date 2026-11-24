@@ -30,8 +30,8 @@ const getPlatform = (fingerprint) => {
 };
 
 const PLATFORM_UI = {
-  ios: { label: 'iOS' },
-  android: { label: 'Android' },
+  ios: { icon: '🍎', label: 'iOS' },
+  android: { icon: '📱', label: 'Android' },
 };
 
 const formatSizeMb = (mb) => {
@@ -644,7 +644,7 @@ export default function SuperStudentsPage() {
                             <td style={{textAlign:'center', direction:'ltr', fontFamily:'monospace', color:'var(--text-secondary)'}}>{std.phone}</td>
                             <td style={{textAlign:'center', direction:'ltr', fontFamily:'monospace', fontSize:'0.85em', color:'var(--text-secondary)'}}>{std.email || '-'}</td>
                             <td style={{textAlign:'center'}}>
-                                {std.device_id ? (() => { const pk = getPlatform(std.device_id); const pu = PLATFORM_UI[pk]; return <span title={std.device_id} className={`device-badge used ${pk}`}>📱 {pu.label}</span>; })() : <span className="device-badge free">⚪ فارغ</span>}
+                                {std.device_id ? (() => { const pk = getPlatform(std.device_id); const pu = PLATFORM_UI[pk]; return <span title={std.device_id} className={`device-badge used ${pk}`}>{pu.icon}&nbsp;{pu.label}</span>; })() : <span className="device-badge free">⚪ فارغ</span>}
                             </td>
                             <td style={{textAlign:'center'}}>
                                 {std.is_blocked ? 
@@ -795,7 +795,7 @@ export default function SuperStudentsPage() {
                                       <div className="val-box" style={{ justifyContent: 'space-between', gap: '10px' }}>
                                           {viewUser.device_id ? (
                                               <>
-                                                  <span className={`dev-status ${getPlatform(viewUser.device_id)}`}>📱 مرتبط بجهاز {PLATFORM_UI[getPlatform(viewUser.device_id)].label}</span>
+                                                  <span className={`dev-status ${getPlatform(viewUser.device_id)}`}>{PLATFORM_UI[getPlatform(viewUser.device_id)].icon}&nbsp;مرتبط بجهاز {PLATFORM_UI[getPlatform(viewUser.device_id)].label}</span>
                                                   <button type="button" className="dev-info-btn" title="عرض تفاصيل الجهاز" aria-label="عرض تفاصيل الجهاز" onClick={() => setShowDeviceModal(true)}>
                                                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>
                                                   </button>
@@ -1069,14 +1069,14 @@ export default function SuperStudentsPage() {
         .status-badge.active { background: rgba(34, 197, 94, 0.1); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.2); }
         .status-badge.blocked { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); }
         
-        .device-badge { padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; display: inline-block; border: 1px solid transparent; }
+        .device-badge { padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; display: inline-block; white-space: nowrap; border: 1px solid transparent; }
         .device-badge.used { background: rgba(56, 189, 248, 0.1); color: #38bdf8; border-color: rgba(56, 189, 248, 0.2); }
         .device-badge.free { color: var(--text-muted); background: var(--bg-elevated); border-color: var(--border); }
         .device-badge.ios { background: rgba(226, 232, 240, 0.08); color: #e2e8f0; border-color: rgba(226, 232, 240, 0.25); }
-        .device-badge.android { background: rgba(59, 130, 246, 0.12); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); }
+        .device-badge.android { background: rgba(125, 185, 252, 0.12); color: #7db9fc; border-color: rgba(125, 185, 252, 0.3); }
 
         .dev-status { font-weight: bold; }
-        .dev-status.android { color: #60a5fa; }
+        .dev-status.android { color: #7db9fc; }
         .dev-status.ios { color: #e2e8f0; }
         .dev-info-btn { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-secondary); cursor: pointer; transition: 0.2s; padding: 0; }
         .dev-info-btn:hover { color: var(--gold); border-color: var(--gold); background: var(--gold-dim); }

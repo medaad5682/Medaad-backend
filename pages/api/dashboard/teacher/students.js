@@ -316,7 +316,7 @@ export default async (req, res) => {
               
               // 🔒 فلترة البيانات القادمة من الفرونت إند لضمان أنها تخص هذا المدرس فقط
               let safeCourses = courses.filter(id => myCourseIds.includes(Number(id)) || myCourseIds.includes(String(id)));
-              const safeSubjects = subjects.filter(id => mySubjectIds.includes(Number(id)) || mySubjectIds.includes(String(id)));
+              const requestedSubjects = subjects.filter(id => mySubjectIds.includes(Number(id)) || mySubjectIds.includes(String(id)));
 
               // -- تجهيز الباقات المختارة أولاً (قبل معالجة الكورسات المفردة) --
               // متاحة فقط لقائد الفريق
@@ -338,6 +338,14 @@ export default async (req, res) => {
                   );
                   safeCourses = safeCourses.filter(id => !packageCourseIds.has(String(id)));
               }
+
+              // 🛡️ منع ازدواجية طلب الاشتراك (مادة + كورسها الأب): لو الكورس الأب مُختار في نفس العملية
+              // (منفرداً أو ضمن باقة)، فمنح الكورس يغطي كل مواده، فيُسجَّل الكورس الأب فقط
+              // ولا يُنشأ طلب/صلاحية مستقلة للمادة.
+              const subjectParentCourse = new Map(mySubjects.map(s => [String(s.id), String(s.course_id)]));
+              const coveredCourseIds = new Set(safeCourses.map(String));
+              chosenPackages.forEach(p => (p.courses || []).forEach(c => coveredCourseIds.add(String(c.id))));
+              const safeSubjects = requestedSubjects.filter(id => !coveredCourseIds.has(subjectParentCourse.get(String(id))));
 
               // 🛑 1. جلب الصلاحيات الموجودة مسبقاً لمنع التكرار
               const existingCourseMap = new Set();
