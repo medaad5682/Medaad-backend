@@ -902,7 +902,7 @@ export default function SuperStudentsPage() {
                               {/* 📦 1) الباقات — مقسمة حسب الفريق، كل قائمة مغلقة افتراضياً */}
                               {packageGroups.length > 0 && (
                                   <div className="grant-section">
-                                      <div className="section-title">📦 الباقات</div>
+                                      <div className="section-title">الباقات</div>
                                       {packageGroups.map(group => {
                                           const key = `team:${group.key}`;
                                           const isOpen = !!openGrantGroups[key];
@@ -927,7 +927,7 @@ export default function SuperStudentsPage() {
                               {/* 📚 2) الكورسات الفردية (بدون باقة) — كل مدرس في قائمة لوحده، مغلقة افتراضياً */}
                               {teacherGroups.length > 0 && (
                                   <div className="grant-section">
-                                      <div className="section-title">📚 كورسات بدون باقة (حسب المدرس)</div>
+                                      <div className="section-title">كورسات بدون باقة (حسب المدرس)</div>
                                       {teacherGroups.map(group => {
                                           const key = `teacher:${group.key}`;
                                           const isOpen = !!openGrantGroups[key];
