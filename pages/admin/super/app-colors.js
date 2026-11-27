@@ -346,7 +346,7 @@ export default function SuperAppColors() {
 
       <div className={`toast ${toast.show ? 'show' : ''} ${toast.type}`}>{toast.message}</div>
 
-      <div className="container">
+      <div className="colors-page">
         <div className="page-header">
           <div className="header-icon"><PaletteIcon /></div>
           <div>
@@ -423,7 +423,8 @@ export default function SuperAppColors() {
       </div>
 
       <style jsx>{`
-        .container { max-width: 1100px; margin: 0 auto; padding-bottom: 60px; }
+        /* ⚠️ لا تستخدم اسم .container: فيه قاعدة عامة في globals.css (display:flex; min-height:100vh) كانت بتكسر التخطيط */
+        .colors-page { width: 100%; max-width: 1100px; margin: 0 auto; padding-bottom: 60px; }
         .page-header { display: flex; align-items: center; gap: 16px; margin-bottom: 26px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
         .header-icon { width: 48px; height: 48px; flex-shrink: 0; background: var(--gold-dim); color: var(--gold); border-radius: 12px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-accent); }
         .page-header h1 { margin: 0 0 6px; color: var(--text-primary); font-size: 1.6rem; font-weight: 800; }
