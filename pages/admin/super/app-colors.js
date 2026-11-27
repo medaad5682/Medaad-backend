@@ -3,10 +3,19 @@ import Head from 'next/head';
 import SuperLayout from '../../../components/SuperLayout';
 import { APP_THEME_KEYS, DEFAULT_APP_THEME, normalizeHex } from '../../../lib/appThemeHelper';
 
+// ⚠️ كل الـ classes هنا بادئة بـ ac- عمداً: في styles/globals.css قواعد عامة (مثل .container)
+// كانت بتكسر التخطيط. ولا نستخدم أي عنصر افتراضي من المتصفح (confirm / range / أزرار غير منسّقة).
+
+const MODES = [
+  { id: 'dark', label: 'الوضع الليلي', icon: '🌙' },
+  { id: 'light', label: 'الوضع النهاري', icon: '☀️' },
+];
+
 // ─── Icons ──────────────────────────────────────────────
 const PaletteIcon = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1.5"></circle><circle cx="17.5" cy="10.5" r="1.5"></circle><circle cx="8.5" cy="7.5" r="1.5"></circle><circle cx="6.5" cy="12.5" r="1.5"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.5-.67 1.5-1.5 0-.4-.15-.76-.4-1.04-.23-.27-.38-.63-.38-1.04 0-.83.67-1.5 1.5-1.5H16c3.05 0 5.5-2.45 5.5-5.5C21.5 6.17 17.25 2 12 2z"></path></svg>);
 const ResetIcon = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>);
 const SaveIcon = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>);
+const UndoIcon = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 14 4 9 9 4"></polyline><path d="M20 20v-7a4 4 0 0 0-4-4H4"></path></svg>);
 
 // ─── Color math ─────────────────────────────────────────
 function hexToRgb(hex) {
@@ -40,6 +49,10 @@ function hsvToRgb(h, s, v) {
   else [r, g, b] = [c, 0, x];
   return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
 }
+const hexToHsv = (hex) => { const [r, g, b] = hexToRgb(hex); return rgbToHsv(r, g, b); };
+const hsvToHex = ({ h, s, v }) => rgbToHex(...hsvToRgb(h, s, v));
+const clamp01 = (n) => Math.min(1, Math.max(0, n));
+
 function luminance(hex) {
   const [r, g, b] = hexToRgb(hex).map(v => {
     v /= 255;
@@ -52,31 +65,19 @@ function contrast(a, b) {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
-// ─── دائرة الألوان (Hue = الزاوية، Saturation = البعد عن المركز) ───
-function ColorWheel({ value, onChange, size = 220 }) {
+// ─── دائرة الألوان (الزاوية = اللون، البعد عن المركز = التشبّع) ───
+function Wheel({ hsv, color, onPick, size = 220 }) {
   const canvasRef = useRef(null);
   const draggingRef = useRef(false);
-  const [hsv, setHsv] = useState(() => { const [r, g, b] = hexToRgb(value); return rgbToHsv(r, g, b); });
 
-  const currentHex = rgbToHex(...hsvToRgb(hsv.h, hsv.s, hsv.v));
-
-  // لو القيمة اتغيرت من برّه (كتابة كود لون / زر الافتراضي / اختيار صف آخر) نزامن الدائرة
-  useEffect(() => {
-    const n = normalizeHex(value);
-    if (n && n !== currentHex) {
-      const [r, g, b] = hexToRgb(n);
-      setHsv(rgbToHsv(r, g, b));
-    }
-  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // رسم الدائرة (تتعاد عند تغيّر السطوع فقط)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const ctx = canvas.getContext && canvas.getContext('2d');
+    if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     const px = Math.round(size * dpr);
     canvas.width = px; canvas.height = px;
-    const ctx = canvas.getContext('2d');
     const img = ctx.createImageData(px, px);
     const c = px / 2, R = c - 1;
     for (let y = 0; y < px; y++) {
@@ -101,65 +102,71 @@ function ColorWheel({ value, onChange, size = 220 }) {
     const dy = e.clientY - rect.top - rect.height / 2;
     let hue = Math.atan2(dy, dx) * 180 / Math.PI;
     if (hue < 0) hue += 360;
-    const sat = Math.min(1, Math.sqrt(dx * dx + dy * dy) / (rect.width / 2));
-    const next = { ...hsv, h: hue, s: sat };
-    setHsv(next);
-    onChange(rgbToHex(...hsvToRgb(next.h, next.s, next.v)));
-  };
-
-  const onBrightness = (val) => {
-    const next = { ...hsv, v: val / 100 };
-    setHsv(next);
-    onChange(rgbToHex(...hsvToRgb(next.h, next.s, next.v)));
+    onPick(hue, Math.min(1, Math.sqrt(dx * dx + dy * dy) / (rect.width / 2)));
   };
 
   const angle = hsv.h * Math.PI / 180;
   const mx = size / 2 + Math.cos(angle) * hsv.s * (size / 2);
   const my = size / 2 + Math.sin(angle) * hsv.s * (size / 2);
-  const pureHex = rgbToHex(...hsvToRgb(hsv.h, hsv.s, 1));
 
   return (
-    <div className="wheel-wrap">
-      <div className="wheel" style={{ width: size, height: size }}>
-        <canvas
-          ref={canvasRef}
-          style={{ width: size, height: size }}
-          onPointerDown={(e) => { draggingRef.current = true; e.currentTarget.setPointerCapture(e.pointerId); pick(e); }}
-          onPointerMove={(e) => { if (draggingRef.current) pick(e); }}
-          onPointerUp={() => { draggingRef.current = false; }}
-          onPointerCancel={() => { draggingRef.current = false; }}
-        />
-        <div className="marker" style={{ left: mx, top: my, background: currentHex }} />
-      </div>
-      <div className="bright">
-        <span>السطوع</span>
-        <input
-          type="range" min="0" max="100" step="1"
-          value={Math.round(hsv.v * 100)}
-          onChange={(e) => onBrightness(Number(e.target.value))}
-          style={{ background: `linear-gradient(to left, ${pureHex}, #000000)` }}
-        />
-      </div>
-      <style jsx>{`
-        .wheel-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; direction: ltr; }
-        .wheel { position: relative; touch-action: none; user-select: none; }
-        canvas { display: block; border-radius: 50%; cursor: crosshair; box-shadow: 0 0 0 1px var(--border); }
-        .marker {
-          position: absolute; width: 20px; height: 20px; border-radius: 50%;
-          transform: translate(-50%, -50%); pointer-events: none;
-          border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 2px 6px rgba(0,0,0,0.5);
-        }
-        .bright { width: 100%; display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-size: 0.82rem; direction: rtl; }
-        .bright input[type=range] { flex: 1; height: 10px; border-radius: 6px; appearance: none; -webkit-appearance: none; outline: none; border: 1px solid var(--border); direction: ltr; }
-        .bright input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 2px solid #555; cursor: pointer; }
-        .bright input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 2px solid #555; cursor: pointer; }
-      `}</style>
+    <div className="ac-wheel" style={{ width: size, height: size }}>
+      <canvas
+        ref={canvasRef}
+        style={{ width: size, height: size }}
+        onPointerDown={(e) => { draggingRef.current = true; if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId); pick(e); }}
+        onPointerMove={(e) => { if (draggingRef.current) pick(e); }}
+        onPointerUp={() => { draggingRef.current = false; }}
+        onPointerCancel={() => { draggingRef.current = false; }}
+      />
+      <div className="ac-marker" style={{ left: mx, top: my, background: color }} />
+    </div>
+  );
+}
+
+// ─── شريط السطوع (مخصّص بالكامل، بدون input range) ─────────
+const THUMB_INSET = 12;
+function ValueSlider({ v, pureHex, onChange }) {
+  const trackRef = useRef(null);
+  const draggingRef = useRef(false);
+
+  const fromEvent = (e) => {
+    const r = trackRef.current.getBoundingClientRect();
+    onChange(clamp01((e.clientX - r.left - THUMB_INSET) / Math.max(1, r.width - THUMB_INSET * 2)));
+  };
+  const onKeyDown = (e) => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); onChange(clamp01(v + step)); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); onChange(clamp01(v - step)); }
+    else if (e.key === 'Home') { e.preventDefault(); onChange(0); }
+    else if (e.key === 'End') { e.preventDefault(); onChange(1); }
+  };
+
+  return (
+    <div
+      ref={trackRef}
+      className="ac-slider"
+      dir="ltr"
+      role="slider"
+      tabIndex={0}
+      aria-label="السطوع"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(v * 100)}
+      style={{ background: `linear-gradient(to right, #000000, ${pureHex})` }}
+      onKeyDown={onKeyDown}
+      onPointerDown={(e) => { draggingRef.current = true; if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId); fromEvent(e); }}
+      onPointerMove={(e) => { if (draggingRef.current) fromEvent(e); }}
+      onPointerUp={() => { draggingRef.current = false; }}
+      onPointerCancel={() => { draggingRef.current = false; }}
+    >
+      <div className="ac-thumb" style={{ left: `calc(${THUMB_INSET}px + (100% - ${THUMB_INSET * 2}px) * ${v})` }} />
     </div>
   );
 }
 
 // ─── حقل كود اللون (#RRGGBB) ────────────────────────────
-function HexInput({ value, onCommit, className = '' }) {
+function HexInput({ value, onCommit }) {
   const [text, setText] = useState(value);
   useEffect(() => { setText(value); }, [value]);
 
@@ -174,53 +181,140 @@ function HexInput({ value, onCommit, className = '' }) {
 
   return (
     <input
-      className={`hex-input ${className}`}
+      className="ac-hex"
       dir="ltr"
       spellCheck={false}
+      autoComplete="off"
       maxLength={7}
       value={text}
       placeholder="#RRGGBB"
       onChange={(e) => { setText(e.target.value); tryCommit(e.target.value, true); }}
       onBlur={() => { if (!tryCommit(text, false)) setText(value); }}
       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-      style={{
-        width: '100%', padding: '9px 10px', borderRadius: 8, fontFamily: 'monospace', fontSize: '0.92rem',
-        letterSpacing: '0.5px', textTransform: 'uppercase',
-        background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border)', outline: 'none',
-      }}
     />
   );
 }
 
-// ─── معاينة شكل التطبيق بالألوان الحالية ────────────────
-function PhonePreview({ title, c, prefix }) {
+// ─── المنتقي: دائرة + كود + سطوع + مقارنة بالافتراضي ───────
+function ColorPicker({ value, defaultValue, label, hint, onChange }) {
+  const [hsv, setHsv] = useState(() => hexToHsv(value));
+  const currentHex = hsvToHex(hsv);
+
+  // مزامنة لو القيمة اتغيّرت من برّه (كتابة كود / اختيار لون آخر / الافتراضي)
+  useEffect(() => {
+    const n = normalizeHex(value);
+    if (n && n !== currentHex) setHsv(hexToHsv(n));
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const apply = (next) => { setHsv(next); onChange(hsvToHex(next)); };
+  const pureHex = hsvToHex({ h: hsv.h, s: hsv.s, v: 1 });
+  const isDefault = value === defaultValue;
+
+  return (
+    <div className="ac-picker">
+      <Wheel hsv={hsv} color={currentHex} onPick={(h, s) => apply({ ...hsv, h, s })} />
+      <div className="ac-controls">
+        <div className="ac-sel">
+          <span className="ac-sel-name">{label}</span>
+          <span className="ac-sel-hint">{hint}</span>
+        </div>
+
+        <div className="ac-field">
+          <span className="ac-field-label">كود اللون</span>
+          <HexInput value={value} onCommit={onChange} />
+        </div>
+
+        <div className="ac-field">
+          <span className="ac-field-label">السطوع</span>
+          <ValueSlider v={hsv.v} pureHex={pureHex} onChange={(v) => apply({ ...hsv, v })} />
+        </div>
+
+        <div className="ac-compare">
+          <div className="ac-cmp">
+            <span className="ac-cmp-box" style={{ background: value }} />
+            <span className="ac-cmp-text"><b>الحالي</b><i>{value}</i></span>
+          </div>
+          <button type="button" className="ac-cmp ac-cmp-btn" disabled={isDefault} onClick={() => onChange(defaultValue)}>
+            <span className="ac-cmp-box" style={{ background: defaultValue }} />
+            <span className="ac-cmp-text"><b>{isDefault ? 'هو الافتراضي' : 'استرجاع الافتراضي'}</b><i>{defaultValue}</i></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── معاينة مباشرة لشكل التطبيق ─────────────────────────
+function PhonePreview({ c, prefix }) {
   const bg = c[`${prefix}_bg_primary`], card = c[`${prefix}_bg_secondary`];
   const tp = c[`${prefix}_text_primary`], ts = c[`${prefix}_text_secondary`], ac = c[`${prefix}_accent`];
+  const t = 'background-color .25s ease, color .25s ease, border-color .25s ease';
+
   const warnings = [];
   if (contrast(tp, bg) < 3) warnings.push('النص الأساسي لا يظهر بوضوح فوق الخلفية');
   if (contrast(ts, bg) < 2) warnings.push('النص الفرعي باهت جداً فوق الخلفية');
   if (contrast(bg, ac) < 2.5) warnings.push('نص الأزرار لا يظهر بوضوح فوق لون الأزرار');
+  if (contrast(ac, bg) < 1.6) warnings.push('لون الأزرار قريب جداً من لون الخلفية');
+
   return (
     <div>
-      <div style={{ background: bg, border: '1px solid rgba(128,128,128,0.35)', borderRadius: 16, padding: 14 }}>
-        <div style={{ color: tp, fontWeight: 800, fontSize: 15 }}>{title}</div>
-        <div style={{ color: ts, fontSize: 12, marginTop: 2 }}>نص فرعي توضيحي</div>
-        <div style={{ background: card, borderRadius: 12, padding: 10, margin: '12px 0' }}>
-          <div style={{ color: tp, fontWeight: 700, fontSize: 13 }}>كورس التشريح</div>
-          <div style={{ color: ts, fontSize: 11, margin: '2px 0 8px' }}>24 فيديو • 6 امتحانات</div>
-          <div style={{ height: 6, borderRadius: 3, background: `${ac}33` }}>
-            <div style={{ width: '60%', height: '100%', borderRadius: 3, background: ac }} />
+      <div className="ac-phone" style={{ background: bg, transition: t }}>
+        <div className="ac-phone-top">
+          <div>
+            <div style={{ color: tp, fontWeight: 800, fontSize: 15, transition: t }}>أهلاً بك 👋</div>
+            <div style={{ color: ts, fontSize: 11, marginTop: 2, transition: t }}>كمّل من حيث توقفت</div>
+          </div>
+          <div style={{ width: 34, height: 34, borderRadius: '50%', background: ac, transition: t }} />
+        </div>
+
+        <div style={{ background: card, borderRadius: 14, padding: 12, transition: t }}>
+          <div style={{ color: tp, fontWeight: 700, fontSize: 13, transition: t }}>كورس التشريح</div>
+          <div style={{ color: ts, fontSize: 11, margin: '3px 0 10px', transition: t }}>24 فيديو • 6 امتحانات</div>
+          <div style={{ height: 6, borderRadius: 3, background: `${ac}33`, transition: t }}>
+            <div style={{ width: '60%', height: '100%', borderRadius: 3, background: ac, transition: t }} />
           </div>
         </div>
-        <div style={{ background: ac, color: bg, borderRadius: 12, textAlign: 'center', padding: '9px 0', fontWeight: 800, fontSize: 13 }}>
+
+        <div style={{ background: ac, color: bg, borderRadius: 14, textAlign: 'center', padding: '11px 0', fontWeight: 800, fontSize: 13, margin: '12px 0', transition: t }}>
           ابدأ المذاكرة
+        </div>
+
+        <div style={{ background: card, borderRadius: 14, padding: '10px 6px', display: 'flex', justifyContent: 'space-around', transition: t }}>
+          {['الرئيسية', 'كورساتي', 'حسابي'].map((n, i) => (
+            <div key={n} style={{ textAlign: 'center', color: i === 0 ? ac : ts, fontSize: 10, fontWeight: i === 0 ? 800 : 500, transition: t }}>
+              <div style={{ width: 18, height: 18, borderRadius: 6, background: i === 0 ? ac : ts, opacity: i === 0 ? 1 : 0.45, margin: '0 auto 4px', transition: t }} />
+              {n}
+            </div>
+          ))}
         </div>
       </div>
       {warnings.length > 0 && (
-        <div style={{ marginTop: 8, color: '#f59e0b', fontSize: '0.78rem', lineHeight: 1.6 }}>
-          {warnings.map(w => <div key={w}>⚠️ {w}</div>)}
-        </div>
+        <div className="ac-warn">{warnings.map(w => <div key={w}>⚠️ {w}</div>)}</div>
       )}
+    </div>
+  );
+}
+
+// ─── نافذة تأكيد مخصّصة (بدل window.confirm) ────────────
+function ConfirmModal({ open, title, message, confirmLabel, busy, onConfirm, onCancel }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+  return (
+    <div className="ac-overlay" onClick={onCancel}>
+      <div className="ac-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <div className="ac-modal-title">{title}</div>
+        <div className="ac-modal-msg">{message}</div>
+        <div className="ac-modal-actions">
+          <button type="button" className="ac-btn ac-btn-danger-solid" onClick={onConfirm} disabled={busy}>{busy ? 'جاري التنفيذ...' : confirmLabel}</button>
+          <button type="button" className="ac-btn ac-btn-ghost" onClick={onCancel} disabled={busy}>إلغاء</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -232,7 +326,9 @@ export default function SuperAppColors() {
   const [colors, setColors] = useState({ ...DEFAULT_APP_THEME });
   const [saved, setSaved] = useState({ ...DEFAULT_APP_THEME });
   const [isCustom, setIsCustom] = useState(false);
-  const [selectedKey, setSelectedKey] = useState(APP_THEME_KEYS[0].key);
+  const [mode, setMode] = useState('dark');
+  const [selected, setSelected] = useState({ dark: 'dark_bg_primary', light: 'light_bg_primary' });
+  const [confirmReset, setConfirmReset] = useState(false);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
   const showToast = useCallback((message, type = 'success') => {
@@ -258,10 +354,15 @@ export default function SuperAppColors() {
     })();
   }, [showToast]);
 
-  const dirty = useMemo(() => APP_THEME_KEYS.some(({ key }) => colors[key] !== saved[key]), [colors, saved]);
+  const changedKeys = useMemo(() => APP_THEME_KEYS.filter(({ key }) => colors[key] !== saved[key]).map(k => k.key), [colors, saved]);
+  const dirty = changedKeys.length > 0;
+  const modeDirty = (m) => changedKeys.some(k => k.startsWith(`${m}_`));
+
+  const modeKeys = APP_THEME_KEYS.filter(k => k.group === mode);
+  const selectedKey = selected[mode];
   const selectedMeta = APP_THEME_KEYS.find(k => k.key === selectedKey);
 
-  const setColor = (key, hex) => setColors(prev => (prev[key] === hex ? prev : { ...prev, [key]: hex }));
+  const setColor = useCallback((key, hex) => setColors(prev => (prev[key] === hex ? prev : { ...prev, [key]: hex })), []);
 
   const handleSave = async () => {
     setSaving(true);
@@ -275,7 +376,7 @@ export default function SuperAppColors() {
       if (!res.ok) throw new Error(data.error || 'فشل الحفظ');
       setSaved({ ...colors });
       setIsCustom(true);
-      showToast('تم حفظ الألوان — هتظهر في التطبيق عند فتحه المرة الجاية ✅');
+      showToast('تم الحفظ ✅ الألوان هتظهر في التطبيق عند الفتح القادم');
     } catch (e) {
       showToast(e.message || 'فشل الحفظ', 'error');
     } finally {
@@ -284,7 +385,6 @@ export default function SuperAppColors() {
   };
 
   const handleResetAll = async () => {
-    if (!window.confirm('هل تريد إعادة كل ألوان التطبيق للوضع الافتراضي؟ سيتم حذف التخصيص المحفوظ.')) return;
     setSaving(true);
     try {
       const res = await fetch('/api/dashboard/super/app-theme', { method: 'DELETE' });
@@ -293,6 +393,7 @@ export default function SuperAppColors() {
       setColors({ ...DEFAULT_APP_THEME });
       setSaved({ ...DEFAULT_APP_THEME });
       setIsCustom(false);
+      setConfirmReset(false);
       showToast('تمت إعادة الألوان للوضع الافتراضي ✅');
     } catch (e) {
       showToast(e.message || 'فشلت إعادة الضبط', 'error');
@@ -301,181 +402,223 @@ export default function SuperAppColors() {
     }
   };
 
-  const renderGroup = (group, title, icon) => (
-    <div className="card">
-      <div className="card-header"><h3>{icon} {title}</h3></div>
-      <div className="card-body rows">
-        {APP_THEME_KEYS.filter(k => k.group === group).map(({ key, label, hint }) => {
-          const active = key === selectedKey;
-          const changedFromDefault = colors[key] !== DEFAULT_APP_THEME[key];
-          return (
-            <div key={key} className={`color-row ${active ? 'active' : ''}`} onClick={() => setSelectedKey(key)}>
-              <button
-                type="button"
-                className="swatch"
-                style={{ background: colors[key] }}
-                title="اختيار من دائرة الألوان"
-                onClick={() => setSelectedKey(key)}
-              />
-              <div className="row-text">
-                <div className="row-label">{label}</div>
-                <div className="row-hint">{hint}</div>
-              </div>
-              <div className="row-hex" onClick={(e) => { e.stopPropagation(); setSelectedKey(key); }}>
-                <HexInput value={colors[key]} onCommit={(hex) => setColor(key, hex)} />
-              </div>
-              <button
-                type="button"
-                className="mini-reset"
-                disabled={!changedFromDefault}
-                title="الرجوع للون الافتراضي"
-                onClick={(e) => { e.stopPropagation(); setColor(key, DEFAULT_APP_THEME[key]); }}
-              >
-                <ResetIcon />
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
   return (
     <SuperLayout title="ألوان التطبيق">
       <Head><title>ألوان التطبيق | الإدارة العليا</title></Head>
 
-      <div className={`toast ${toast.show ? 'show' : ''} ${toast.type}`}>{toast.message}</div>
+      <div className={`ac-toast ${toast.show ? 'show' : ''} ${toast.type}`}>{toast.message}</div>
 
-      <div className="colors-page">
-        <div className="page-header">
-          <div className="header-icon"><PaletteIcon /></div>
-          <div>
-            <h1>التحكم في ألوان التطبيق</h1>
-            <p>
-              اختار اللون من دائرة الألوان أو اكتب كوده مباشرة، وشوف المعاينة قبل الحفظ.
-              <span className={`status-pill ${isCustom ? 'custom' : 'default'}`}>
-                {isCustom ? 'الألوان الحالية: مخصصة' : 'الألوان الحالية: الافتراضية'}
-              </span>
-              {dirty && <span className="status-pill unsaved">تعديلات غير محفوظة</span>}
-            </p>
+      <div className="ac-page">
+        {/* ── الرأس ── */}
+        <div className="ac-header">
+          <div className="ac-header-icon"><PaletteIcon /></div>
+          <div className="ac-header-text">
+            <h1>ألوان التطبيق</h1>
+            <p>اختار اللون من الدائرة أو اكتب كوده، وشوف النتيجة فوراً قبل الحفظ.</p>
+          </div>
+          <div className="ac-pills">
+            <span className={`ac-pill ${isCustom ? 'custom' : ''}`}>{isCustom ? 'مخصصة' : 'الافتراضية'}</span>
+            {dirty && <span className="ac-pill unsaved">{changedKeys.length} تعديل غير محفوظ</span>}
           </div>
         </div>
 
         {loading ? (
-          <div className="loading-wrap"><div className="spinner" /></div>
+          <div className="ac-loading"><div className="ac-spinner" /></div>
         ) : (
           <>
-            <div className="layout">
-              <div className="col-editor">
-                {renderGroup('dark', 'الوضع الليلي', '🌙')}
-                {renderGroup('light', 'الوضع النهاري', '☀️')}
-              </div>
-
-              <div className="col-side">
-                <div className="card sticky">
-                  <div className="card-header">
-                    <h3>🎨 المنتقي — {selectedMeta.group === 'dark' ? 'الليلي' : 'النهاري'} / {selectedMeta.label}</h3>
-                  </div>
-                  <div className="card-body picker-body">
-                    <ColorWheel value={colors[selectedKey]} onChange={(hex) => setColor(selectedKey, hex)} />
-                    <div className="picker-hex">
-                      <HexInput value={colors[selectedKey]} onCommit={(hex) => setColor(selectedKey, hex)} />
-                      <button
-                        type="button"
-                        className="btn btn-ghost small"
-                        disabled={colors[selectedKey] === DEFAULT_APP_THEME[selectedKey]}
-                        onClick={() => setColor(selectedKey, DEFAULT_APP_THEME[selectedKey])}
-                      >
-                        <ResetIcon /> الافتراضي ({DEFAULT_APP_THEME[selectedKey]})
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="card">
-                  <div className="card-header"><h3>👁️ معاينة مباشرة</h3></div>
-                  <div className="card-body previews">
-                    <PhonePreview title="الوضع الليلي" c={colors} prefix="dark" />
-                    <PhonePreview title="الوضع النهاري" c={colors} prefix="light" />
-                  </div>
-                </div>
-              </div>
+            {/* ── تبديل الوضع ── */}
+            <div className="ac-seg" role="tablist">
+              <div className={`ac-seg-ind ${mode}`} />
+              {MODES.map(m => (
+                <button key={m.id} type="button" role="tab" aria-selected={mode === m.id}
+                  className={`ac-seg-btn ${mode === m.id ? 'on' : ''}`} onClick={() => setMode(m.id)}>
+                  <span>{m.icon} {m.label}</span>
+                  {modeDirty(m.id) && <span className="ac-seg-dot" />}
+                </button>
+              ))}
             </div>
 
-            <div className="action-bar">
-              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !dirty}>
+            <div className="ac-grid">
+              {/* ── المحرر ── */}
+              <section className="ac-card">
+                <div className="ac-card-title">اختار اللون اللي عاوز تغيّره</div>
+                <div className="ac-chips">
+                  {modeKeys.map(({ key, label }) => (
+                    <button key={key} type="button"
+                      className={`ac-chip ${key === selectedKey ? 'on' : ''}`}
+                      onClick={() => setSelected(s => ({ ...s, [mode]: key }))}>
+                      <span className="ac-dot" style={{ background: colors[key] }} />
+                      <span className="ac-chip-text">
+                        <b>{label}</b>
+                        <i>{colors[key]}</i>
+                      </span>
+                      {colors[key] !== saved[key] && <span className="ac-chip-mod" title="تعديل غير محفوظ" />}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="ac-divider" />
+
+                <ColorPicker
+                  value={colors[selectedKey]}
+                  defaultValue={DEFAULT_APP_THEME[selectedKey]}
+                  label={selectedMeta.label}
+                  hint={selectedMeta.hint}
+                  onChange={(hex) => setColor(selectedKey, hex)}
+                />
+              </section>
+
+              {/* ── المعاينة ── */}
+              <aside className="ac-card ac-preview-card">
+                <div className="ac-card-title">معاينة — {mode === 'dark' ? 'الوضع الليلي' : 'الوضع النهاري'}</div>
+                <PhonePreview c={colors} prefix={mode} />
+              </aside>
+            </div>
+
+            {/* ── شريط الإجراءات ── */}
+            <div className="ac-actions">
+              <button type="button" className="ac-btn ac-btn-primary" onClick={handleSave} disabled={saving || !dirty}>
                 <SaveIcon /> {saving ? 'جاري الحفظ...' : 'حفظ الألوان'}
               </button>
-              <button type="button" className="btn btn-ghost" onClick={() => setColors({ ...saved })} disabled={saving || !dirty}>
-                تراجع عن التعديلات
+              <button type="button" className="ac-btn ac-btn-ghost" onClick={() => setColors({ ...saved })} disabled={saving || !dirty}>
+                <UndoIcon /> تراجع عن التعديلات
               </button>
-              <button type="button" className="btn btn-danger" onClick={handleResetAll} disabled={saving || (!isCustom && !dirty)}>
-                <ResetIcon /> إعادة الألوان للوضع الافتراضي
+              <button type="button" className="ac-btn ac-btn-danger" onClick={() => setConfirmReset(true)} disabled={saving || (!isCustom && !dirty)}>
+                <ResetIcon /> إعادة للوضع الافتراضي
               </button>
             </div>
 
-            <p className="note">
-              التطبيق بيجيب الألوان من السيرفر عند فتحه. لو السيرفر مردّش أو مفيش نت، بيستخدم آخر ألوان
-              اتحمّلت قبل كده، ولو مفيش بيرجع لألوانه الافتراضية المدمجة. ألوان الحالة (النجاح/الخطأ/الأزرق/البرتقالي) ثابتة ومش جزء من هذه الصفحة.
+            <p className="ac-note">
+              التطبيق بيجيب الألوان من السيرفر ويحفظها عنده، وبتظهر للمستخدم عند فتح التطبيق المرة الجاية (من غير وميض).
+              لو السيرفر مردّش بيستخدم آخر ألوان محفوظة، ولو مفيش بيرجع لألوانه الافتراضية المدمجة.
+              ألوان الحالة (نجاح / خطأ / أزرق / برتقالي) ثابتة ومش جزء من هذه الصفحة.
             </p>
           </>
         )}
       </div>
 
-      <style jsx>{`
-        /* ⚠️ لا تستخدم اسم .container: فيه قاعدة عامة في globals.css (display:flex; min-height:100vh) كانت بتكسر التخطيط */
-        .colors-page { width: 100%; max-width: 1100px; margin: 0 auto; padding-bottom: 60px; }
-        .page-header { display: flex; align-items: center; gap: 16px; margin-bottom: 26px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
-        .header-icon { width: 48px; height: 48px; flex-shrink: 0; background: var(--gold-dim); color: var(--gold); border-radius: 12px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-accent); }
-        .page-header h1 { margin: 0 0 6px; color: var(--text-primary); font-size: 1.6rem; font-weight: 800; }
-        .page-header p { margin: 0; color: var(--text-secondary); font-size: 0.95rem; line-height: 1.9; }
-        .status-pill { display: inline-block; margin-inline-start: 10px; padding: 2px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; border: 1px solid var(--border); }
-        .status-pill.custom { color: var(--gold); border-color: var(--border-accent); background: var(--gold-dim); }
-        .status-pill.default { color: var(--text-muted); }
-        .status-pill.unsaved { color: #f59e0b; border-color: #f59e0b66; background: #f59e0b1a; }
+      <ConfirmModal
+        open={confirmReset}
+        title="إعادة الألوان للوضع الافتراضي؟"
+        message="هيتم حذف التخصيص المحفوظ بالكامل، والتطبيق هيرجع لألوانه الأصلية عند الفتح القادم."
+        confirmLabel="نعم، أعد الضبط"
+        busy={saving}
+        onConfirm={handleResetAll}
+        onCancel={() => { if (!saving) setConfirmReset(false); }}
+      />
 
-        .layout { display: grid; grid-template-columns: 1fr 340px; gap: 24px; align-items: start; }
-        .col-editor, .col-side { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
-        .sticky { position: sticky; top: 16px; }
-        @media (max-width: 920px) { .layout { grid-template-columns: 1fr; } .sticky { position: static; } }
+      <style jsx global>{`
+        .ac-page { width: 100%; max-width: 1100px; margin: 0 auto; padding-bottom: 40px; }
 
-        .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); }
-        .card-header { background: var(--bg-elevated); padding: 16px 22px; border-bottom: 1px solid var(--border); }
-        .card-header h3 { margin: 0; color: var(--gold); font-size: 1.02rem; font-weight: 700; }
-        .card-body { padding: 18px 22px; }
-        .rows { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
-        .previews { display: flex; flex-direction: column; gap: 18px; }
-        .picker-body { display: flex; flex-direction: column; gap: 16px; }
-        .picker-hex { display: flex; flex-direction: column; gap: 10px; }
+        /* header */
+        .ac-header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
+        .ac-header-icon { width: 46px; height: 46px; flex-shrink: 0; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: var(--gold-dim); color: var(--gold); border: 1px solid var(--border-accent); }
+        .ac-header-text { flex: 1 1 220px; min-width: 0; }
+        .ac-header-text h1 { margin: 0 0 4px; font-size: 1.5rem; font-weight: 800; color: var(--text-primary); }
+        .ac-header-text p { margin: 0; font-size: 0.9rem; color: var(--text-secondary); line-height: 1.7; }
+        .ac-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+        .ac-pill { padding: 4px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; border: 1px solid var(--border); color: var(--text-muted); background: var(--bg-elevated); }
+        .ac-pill.custom { color: var(--gold); border-color: var(--border-accent); background: var(--gold-dim); }
+        .ac-pill.unsaved { color: #f59e0b; border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.1); }
 
-        .color-row { display: grid; grid-template-columns: 44px 1fr 120px 34px; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); cursor: pointer; transition: border-color .15s, box-shadow .15s; }
-        .color-row:hover { border-color: var(--border-accent); }
-        .color-row.active { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-dim); }
-        .swatch { width: 44px; height: 44px; border-radius: 12px; border: 2px solid rgba(128,128,128,0.45); cursor: pointer; padding: 0; }
-        .row-label { color: var(--text-primary); font-weight: 700; font-size: 0.95rem; }
-        .row-hint { color: var(--text-muted); font-size: 0.78rem; margin-top: 2px; }
-        .mini-reset { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; }
-        .mini-reset:disabled { opacity: 0.3; cursor: default; }
-        .mini-reset:not(:disabled):hover { color: var(--gold); border-color: var(--gold); }
-        @media (max-width: 560px) { .color-row { grid-template-columns: 44px 1fr 34px; } .row-hex { grid-column: 1 / -1; grid-row: 2; } }
+        /* segmented mode switch */
+        .ac-seg { position: relative; display: flex; direction: rtl; width: 100%; max-width: 380px; margin-bottom: 20px; padding: 4px; border-radius: 14px; background: var(--bg-elevated); border: 1px solid var(--border); }
+        .ac-seg-ind { position: absolute; top: 4px; bottom: 4px; width: calc(50% - 4px); border-radius: 10px; background: var(--gold); box-shadow: 0 2px 10px rgba(0,0,0,0.25); transition: right .28s cubic-bezier(.4,0,.2,1); }
+        .ac-seg-ind.dark { right: 4px; }
+        .ac-seg-ind.light { right: 50%; }
+        .ac-seg-btn { position: relative; z-index: 1; flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 0.95rem; font-weight: 700; cursor: pointer; transition: color .2s; -webkit-appearance: none; appearance: none; outline: none; }
+        .ac-seg-btn.on { color: #111; }
+        .ac-seg-btn:focus-visible { box-shadow: 0 0 0 2px var(--gold-dim); }
+        .ac-seg-dot { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; }
 
-        .action-bar { margin-top: 26px; display: flex; flex-wrap: wrap; gap: 12px; padding: 16px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 14px; }
-        .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 20px; border-radius: 10px; font-weight: 700; font-size: 0.95rem; cursor: pointer; border: 1px solid transparent; transition: opacity .15s, transform .1s; font-family: inherit; }
-        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-        .btn:not(:disabled):active { transform: scale(0.98); }
-        .btn.small { padding: 8px 12px; font-size: 0.85rem; }
-        .btn-primary { background: var(--gold); color: #111; }
-        .btn-ghost { background: transparent; color: var(--text-primary); border-color: var(--border); }
-        .btn-danger { background: transparent; color: #ef4444; border-color: #ef444466; margin-inline-start: auto; }
-        .note { margin-top: 16px; color: var(--text-muted); font-size: 0.85rem; line-height: 1.9; }
+        /* grid + cards */
+        .ac-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+        .ac-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 18px; padding: 20px; box-shadow: var(--shadow); min-width: 0; }
+        .ac-card-title { margin-bottom: 14px; font-size: 0.95rem; font-weight: 700; color: var(--gold); }
+        .ac-divider { height: 1px; background: var(--border); margin: 20px 0; }
+        .ac-preview-card { position: sticky; top: 16px; }
+        @media (max-width: 920px) { .ac-grid { grid-template-columns: minmax(0, 1fr); } .ac-preview-card { position: static; } }
 
-        .loading-wrap { display: flex; justify-content: center; padding: 80px 0; }
-        .spinner { width: 38px; height: 38px; border: 4px solid var(--border); border-top-color: var(--gold); border-radius: 50%; animation: spin 0.8s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        /* color chips */
+        .ac-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px; }
+        .ac-chip { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-primary); font-family: inherit; text-align: start; cursor: pointer; transition: border-color .18s, box-shadow .18s, transform .1s, background-color .18s; -webkit-appearance: none; appearance: none; outline: none; }
+        .ac-chip:hover { border-color: var(--border-accent); }
+        .ac-chip:active { transform: scale(0.98); }
+        .ac-chip.on { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-dim); }
+        .ac-chip:focus-visible { box-shadow: 0 0 0 3px var(--gold-dim); }
+        .ac-dot { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; border: 2px solid rgba(128,128,128,0.45); transition: background-color .2s; }
+        .ac-chip-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.5; }
+        .ac-chip-text b { font-size: 0.86rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ac-chip-text i { font-style: normal; font-family: monospace; font-size: 0.74rem; color: var(--text-muted); direction: ltr; text-align: start; }
+        .ac-chip-mod { position: absolute; top: 8px; inset-inline-end: 8px; width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; }
 
-        .toast { position: fixed; top: 20px; left: 50%; transform: translate(-50%, -120px); padding: 12px 22px; border-radius: 10px; font-weight: 700; z-index: 9999; color: #fff; background: #16a34a; box-shadow: 0 8px 24px rgba(0,0,0,0.35); transition: transform .3s; max-width: 90vw; text-align: center; }
-        .toast.error { background: #dc2626; }
-        .toast.show { transform: translate(-50%, 0); }
+        /* picker */
+        .ac-picker { display: flex; flex-wrap: wrap; gap: 26px; align-items: center; justify-content: center; }
+        .ac-wheel { position: relative; flex-shrink: 0; touch-action: none; user-select: none; direction: ltr; }
+        .ac-wheel canvas { display: block; border-radius: 50%; cursor: crosshair; box-shadow: 0 0 0 1px var(--border), 0 8px 24px rgba(0,0,0,0.25); }
+        .ac-marker { position: absolute; width: 22px; height: 22px; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.5); }
+        .ac-controls { flex: 1 1 250px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+        .ac-sel { display: flex; flex-direction: column; gap: 2px; }
+        .ac-sel-name { font-size: 1.05rem; font-weight: 800; color: var(--text-primary); }
+        .ac-sel-hint { font-size: 0.8rem; color: var(--text-muted); }
+        .ac-field { display: flex; flex-direction: column; gap: 7px; }
+        .ac-field-label { font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); }
+
+        .ac-hex { width: 100%; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-base); color: var(--text-primary); font-family: monospace; font-size: 1rem; letter-spacing: 1px; text-transform: uppercase; outline: none; transition: border-color .18s, box-shadow .18s; -webkit-appearance: none; appearance: none; }
+        .ac-hex:focus { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-dim); }
+
+        .ac-slider { position: relative; height: 26px; border-radius: 13px; border: 1px solid var(--border); cursor: pointer; touch-action: none; user-select: none; outline: none; }
+        .ac-slider:focus-visible { box-shadow: 0 0 0 3px var(--gold-dim); }
+        .ac-thumb { position: absolute; top: 50%; width: 24px; height: 24px; border-radius: 50%; transform: translate(-50%, -50%); background: #fff; border: 3px solid rgba(0,0,0,0.55); box-shadow: 0 2px 6px rgba(0,0,0,0.4); pointer-events: none; }
+
+        .ac-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .ac-cmp { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-primary); font-family: inherit; text-align: start; min-width: 0; -webkit-appearance: none; appearance: none; outline: none; }
+        .ac-cmp-btn { cursor: pointer; transition: border-color .18s, opacity .18s; }
+        .ac-cmp-btn:not(:disabled):hover { border-color: var(--gold); }
+        .ac-cmp-btn:disabled { opacity: 0.55; cursor: default; }
+        .ac-cmp-box { width: 26px; height: 26px; flex-shrink: 0; border-radius: 8px; border: 1px solid rgba(128,128,128,0.45); }
+        .ac-cmp-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.5; }
+        .ac-cmp-text b { font-size: 0.76rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ac-cmp-text i { font-style: normal; font-family: monospace; font-size: 0.72rem; color: var(--text-muted); direction: ltr; text-align: start; }
+
+        /* preview */
+        .ac-phone { border-radius: 26px; padding: 16px; border: 1px solid rgba(128,128,128,0.35); box-shadow: 0 10px 30px rgba(0,0,0,0.25); }
+        .ac-phone-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+        .ac-warn { margin-top: 12px; color: #f59e0b; font-size: 0.78rem; line-height: 1.7; }
+
+        /* actions */
+        .ac-actions { position: sticky; bottom: 12px; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; padding: 12px; border-radius: 16px; background: var(--bg-surface); border: 1px solid var(--border); box-shadow: 0 -6px 24px rgba(0,0,0,0.25); }
+        .ac-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 20px; border-radius: 12px; border: 1px solid transparent; font-family: inherit; font-size: 0.93rem; font-weight: 700; cursor: pointer; transition: opacity .15s, transform .1s, background-color .15s, border-color .15s; -webkit-appearance: none; appearance: none; outline: none; }
+        .ac-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .ac-btn:not(:disabled):active { transform: scale(0.97); }
+        .ac-btn:focus-visible { box-shadow: 0 0 0 3px var(--gold-dim); }
+        .ac-btn-primary { background: var(--gold); color: #111; }
+        .ac-btn-primary:not(:disabled):hover { background: var(--gold-light); }
+        .ac-btn-ghost { background: transparent; color: var(--text-primary); border-color: var(--border); }
+        .ac-btn-ghost:not(:disabled):hover { border-color: var(--border-accent); }
+        .ac-btn-danger { background: transparent; color: #ef4444; border-color: rgba(239,68,68,0.45); margin-inline-start: auto; }
+        .ac-btn-danger:not(:disabled):hover { background: rgba(239,68,68,0.1); }
+        .ac-btn-danger-solid { background: #dc2626; color: #fff; }
+        @media (max-width: 560px) { .ac-actions .ac-btn { flex: 1 1 100%; } .ac-btn-danger { margin-inline-start: 0; } }
+
+        .ac-note { margin: 16px 2px 0; font-size: 0.82rem; line-height: 1.9; color: var(--text-muted); }
+
+        /* modal */
+        .ac-overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,0.6); animation: ac-fade .15s ease; }
+        .ac-modal { width: 100%; max-width: 400px; padding: 22px; border-radius: 18px; background: var(--bg-surface); border: 1px solid var(--border); box-shadow: 0 20px 50px rgba(0,0,0,0.5); animation: ac-pop .18s ease; }
+        .ac-modal-title { margin-bottom: 8px; font-size: 1.1rem; font-weight: 800; color: var(--text-primary); }
+        .ac-modal-msg { margin-bottom: 20px; font-size: 0.9rem; line-height: 1.8; color: var(--text-secondary); }
+        .ac-modal-actions { display: flex; flex-direction: column; gap: 8px; }
+        @keyframes ac-fade { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes ac-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+        /* loading + toast */
+        .ac-loading { display: flex; justify-content: center; padding: 80px 0; }
+        .ac-spinner { width: 38px; height: 38px; border-radius: 50%; border: 4px solid var(--border); border-top-color: var(--gold); animation: ac-spin .8s linear infinite; }
+        @keyframes ac-spin { to { transform: rotate(360deg); } }
+        .ac-toast { position: fixed; top: 20px; left: 50%; transform: translate(-50%, -120px); z-index: 10001; max-width: 90vw; padding: 12px 22px; border-radius: 12px; background: #16a34a; color: #fff; font-weight: 700; text-align: center; box-shadow: 0 8px 24px rgba(0,0,0,0.35); transition: transform .3s; }
+        .ac-toast.error { background: #dc2626; }
+        .ac-toast.show { transform: translate(-50%, 0); }
       `}</style>
     </SuperLayout>
   );

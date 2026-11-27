@@ -2,6 +2,31 @@ import { supabase } from '../../../lib/supabaseClient';
 import { checkUserAccess } from '../../../lib/authHelper'; // سنستخدم هذا فقط للتحقق من صحة التوكن والجهاز
 import { invalidateUserCaches } from '../../../lib/accessCache'; // 🗄️ إبطال الكاش (cacheConfig.js)
 
+// 🔒 حد معدّل لبحث الطلاب (في الذاكرة، لكل حساب): حتى مع المطابقة التامة،
+// نمنع التخمين الآلي (تجربة آلاف اليوزرات/الأرقام) لتجميع بيانات الطلاب.
+const SEARCH_WINDOW_MS = 60 * 1000;
+const SEARCH_MAX_PER_WINDOW = 20;
+const searchHits = new Map(); // accountKey -> timestamps[]
+function isSearchRateLimited(key) {
+  const now = Date.now();
+  const hits = (searchHits.get(key) || []).filter(t => now - t < SEARCH_WINDOW_MS);
+  if (hits.length >= SEARCH_MAX_PER_WINDOW) {
+    searchHits.set(key, hits);
+    return true;
+  }
+  hits.push(now);
+  searchHits.set(key, hits);
+  if (searchHits.size > 5000) { // تنظيف دوري حتى لا تكبر الذاكرة
+    for (const [k, v] of searchHits) {
+      if (!v.some(t => now - t < SEARCH_WINDOW_MS)) searchHits.delete(k);
+    }
+  }
+  return false;
+}
+
+// إخفاء معظم رقم الهاتف في نتيجة البحث (التطبيق يعرضه تحت الاسم، فنبقي آخر 3 أرقام فقط)
+const maskPhone = (p) => (p ? '*'.repeat(Math.max(0, String(p).length - 3)) + String(p).slice(-3) : '');
+
 export default async (req, res) => {
   // =================================================================
   // 🔒 التحقق الأمني الصارم (Manual Strict Check)
@@ -61,19 +86,36 @@ export default async (req, res) => {
         return res.status(200).json(team);
       }
 
-      // 2. البحث عن طلاب لترقيتهم (بحث عام في كل الطلاب)
+      // 2. البحث عن طالب لترقيته
+      // 🔒 مطابقة تامة 100% على اسم المستخدم أو رقم الهاتف فقط:
+      //    - لا بحث جزئي ولا بالاسم الأول (كان ممكن تخمين حروف وتسريب بيانات كل الطلاب)
+      //    - فلاتر .eq منفصلة بدل .or(string) حتى لا يمكن حقن شروط في الفلتر
+      //    - رقم الهاتف في الرد مُخفى (آخر 3 أرقام فقط)
       if (mode === 'search') {
-        if (!query || query.length < 3) return res.status(200).json([]);
+        const q = typeof query === 'string' ? query.trim() : '';
+        if (q.length < 3 || q.length > 64) return res.status(200).json([]);
 
-        const { data: students, error } = await supabase
+        if (isSearchRateLimited(String(userId))) {
+          return res.status(429).json({ error: 'محاولات بحث كثيرة، حاول بعد دقيقة' });
+        }
+
+        const base = () => supabase
           .from('users')
           .select('id, first_name, username, phone')
-          .eq('role', 'student') // نبحث في الطلاب فقط
-          .or(`username.ilike.%${query}%,first_name.ilike.%${query}%,phone.ilike.%${query}%`)
-          .limit(10);
+          .eq('role', 'student'); // نبحث في الطلاب فقط
 
-        if (error) throw error;
-        return res.status(200).json(students);
+        const [byUsername, byPhone] = await Promise.all([
+          base().eq('username', q).limit(1),
+          base().eq('phone', q).limit(5),
+        ]);
+        if (byUsername.error) throw byUsername.error;
+        if (byPhone.error) throw byPhone.error;
+
+        const seen = new Set();
+        const results = [...(byUsername.data || []), ...(byPhone.data || [])]
+          .filter(u => (seen.has(u.id) ? false : (seen.add(u.id), true)))
+          .map(u => ({ id: u.id, first_name: u.first_name, username: u.username, phone: maskPhone(u.phone) }));
+        return res.status(200).json(results);
       }
     }
 
@@ -82,19 +124,25 @@ export default async (req, res) => {
     // =================================================================
     if (req.method === 'POST') {
       const { action, userId: targetUserId } = req.body; // تغيير الاسم لتجنب التعارض
+      if (typeof targetUserId !== 'string' || !targetUserId) return res.status(400).json({ error: 'userId is required' });
 
       // 🅰️ ترقية طالب إلى مشرف + منح صلاحيات الكورسات
       if (action === 'promote') {
         // 1. تحديث دور المستخدم وربطه بالمعلم
-        const { error: updateError } = await supabase
+        const { data: promoted, error: updateError } = await supabase
           .from('users')
           .update({ 
             role: 'moderator', 
             teacher_profile_id: teacherId 
           })
-          .eq('id', targetUserId);
+          .eq('id', targetUserId)
+          .eq('role', 'student') // 🔒 لا يُرقّى إلا طالب (يمنع تحويل مدرس/أدمن لمشرف بمعرّفه)
+          .select('id');
 
         if (updateError) throw updateError;
+        if (!promoted || promoted.length === 0) {
+          return res.status(400).json({ error: 'لا يمكن ترقية هذا المستخدم (غير موجود أو ليس طالباً)' });
+        }
         invalidateUserCaches(targetUserId); // 🗄️ تغيّر الدور
 
         // 2. جلب جميع كورسات المعلم
@@ -125,6 +173,7 @@ export default async (req, res) => {
             .select('id')
             .eq('id', targetUserId)
             .eq('teacher_profile_id', teacherId)
+            .eq('role', 'moderator') // 🔒 لا يُخفَّض إلا مشرف (يمنع تخفيض حساب المدرس نفسه)
             .single();
         
         if (!userCheck) return res.status(403).json({ error: 'Unauthorized to modify this user' });

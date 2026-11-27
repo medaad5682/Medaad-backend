@@ -4,6 +4,38 @@ import { getUtcBoundary } from '../../../../lib/egyptTime';
 import { getGlobalPlatformPercentage, computeTeacherBilling } from '../../../../lib/teacherBillingHelper';
 import { getTeamBadgesForTeachers } from '../../../../lib/teamHelper';
 
+// 🔢 Supabase/PostgREST يقطع أي استعلام عند ~1000 صف (max-rows) بدون أي خطأ.
+// الاستعلام المجمّع لطلبات كل المدرسين كان بيتقص بصمت لما عدد الطلبات في الفترة يعدّي 1000،
+// ولأنه مرتّب من الأحدث للأقدم فالمقصوص كان "أقدم" الطلبات → مبالغ المدرس بتقل
+// أول ما تزوّد يوم (حتى لو طلباته مجانية) بينما تقرير المدرس المنفرد (استعلام أصغر) بيطلع صح.
+// الحل: نجلب على صفحات (.range) لحد ما الطلبات تخلص. الترتيب بـ id كمان لثبات الصفحات.
+const REQUESTS_PAGE_SIZE = 1000;
+const REQUESTS_MAX_PAGES = 200; // حماية: حد أقصى 200 ألف طلب في التقرير الواحد
+
+async function fetchAllRequests(teacherProfileIds, startIso, endIso) {
+  const all = [];
+  let from = 0;
+  for (let page = 0; page < REQUESTS_MAX_PAGES; page++) {
+    let q = supabase
+      .from('subscription_requests')
+      .select('*')
+      .in('teacher_id', teacherProfileIds)
+      .in('status', ['approved', 'rejected'])
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, from + REQUESTS_PAGE_SIZE - 1);
+    if (startIso) q = q.gte('created_at', startIso);
+    if (endIso) q = q.lte('created_at', endIso);
+
+    const { data, error } = await q;
+    if (error) return { data: null, error };
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    from += data.length; // لو السيرفر قصّ الصفحة لأقل من المطلوب نكمل من حيث انتهى
+  }
+  return { data: all, error: null };
+}
+
 export default async function handler(req, res) {
   // 🆔 إعداد لوجات التتبع (Logs) لمراقبة الطلبات
   const reqId = Math.random().toString(36).substring(7).toUpperCase();
@@ -77,17 +109,7 @@ export default async function handler(req, res) {
             .in('id', teacherProfileIds)
         : Promise.resolve({ data: [] }),
       teacherProfileIds.length
-        ? (() => {
-            let q = supabase
-              .from('subscription_requests')
-              .select('*')
-              .in('teacher_id', teacherProfileIds)
-              .in('status', ['approved', 'rejected'])
-              .order('created_at', { ascending: false });
-            if (formattedStartDate) q = q.gte('created_at', formattedStartDate);
-            if (formattedEndDate) q = q.lte('created_at', formattedEndDate);
-            return q;
-          })()
+        ? fetchAllRequests(teacherProfileIds, formattedStartDate, formattedEndDate)
         : Promise.resolve({ data: [] }),
       // 👥 شارة الفريق (قائد/عضو + اسم الفريق) لكل مدرس دفعة واحدة، بدلاً من
       // استعلام منفصل لكل مدرس — راجع lib/teamHelper.js
